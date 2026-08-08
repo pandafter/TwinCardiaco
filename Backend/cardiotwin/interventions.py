@@ -248,24 +248,39 @@ def project_scenario(engine: PhysiologyEngine,
                      dose: Optional[float] = None,
                      horizon_s: float = 900.0,
                      sample_every_s: float = 30.0,
-                     dt: float = 0.5) -> dict:
+                     dt: float = 0.5,
+                     delay_s: float = 0.0) -> dict:
     """
     Clona el estado ACTUAL, aplica una intervencion y proyecta.
     No toca el paciente real: es una rama del gemelo.
+
+    `delay_s` espera antes de aplicar, con el paciente deteriorandose
+    mientras tanto. No es un adorno: "dar volumen ahora" y "dar volumen en
+    dos minutos" son decisiones distintas, y en un paciente que cae la
+    diferencia es justo lo que hay que poder ver. El retraso se cuenta
+    DENTRO del horizonte, para que las ramas sigan siendo comparables entre
+    si: alargarlo seria comparar 15 min de una con 17 de otra.
     """
     if intervention_key not in INTERVENTIONS:
         return {"error": f"Intervencion desconocida: {intervention_key}"}
 
     iv = INTERVENTIONS[intervention_key]
     sim = engine.clone()
-    iv.apply(sim, dose)
 
     traj = []
     n = int(horizon_s / dt)
     every = max(1, int(sample_every_s / dt))
     crossed_at = None
+    applied_at = None
+    delay_steps = int(max(0.0, min(delay_s, horizon_s)) / dt)
 
     for i in range(n):
+        # Con delay_s = 0 esto aplica antes del primer step, que es
+        # exactamente lo que hacia antes de existir el retraso.
+        if applied_at is None and i >= delay_steps:
+            iv.apply(sim, dose)
+            applied_at = round(i * dt, 1)
+
         sim.step(dt)
         if crossed_at is None and assess_state(sim.s)["status"] == "critical":
             crossed_at = round(i * dt, 1)
@@ -281,6 +296,10 @@ def project_scenario(engine: PhysiologyEngine,
         "name": iv.name,
         "dose": dose if dose is not None else iv.default_dose,
         "horizon_s": horizon_s,
+        "delay_s": round(delay_s, 1),
+        # Cuando aterrizo de verdad, no cuando se pidio. La UI lo necesita
+        # para marcar el instante en la curva.
+        "applied_at_s": applied_at,
         "trajectory": traj,
         "final_status": final["status"],
         "final_label": final["label"],
