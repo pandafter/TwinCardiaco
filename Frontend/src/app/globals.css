@@ -88,9 +88,12 @@
    así rem y spacing de Tailwind escalan solos.
    Se toma el MENOR de ancho y alto: escalar solo por ancho hace que en una
    pantalla ancha y baja el contenido se salga por abajo. 80 = 1280/16 y
-   53.3 = 853/16. A 1840×1230 da 23px, que es la resolución de la demo. */
+   Los divisores bajaron de 80/53.3 a 70/47: en un portátil de 1440×900
+   la base pasa de ~17px a ~19px. Todo el diseño está en rem, así que sube
+   en bloque y sigue cabiendo. El texto era ilegible en pantallas que no
+   fueran el 1840×1230 de la maqueta. */
 html {
-  font-size: clamp(11px, min(100vw / 80, 100vh / 53.3), 44px);
+  font-size: clamp(13px, min(100vw / 70, 100vh / 47), 44px);
 }
 
 body {
