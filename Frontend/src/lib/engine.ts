@@ -81,10 +81,21 @@ function scriptedRhythm(t: number, hr: number): Rhythm {
   return hr > 100 ? "sinus_tach" : "sinus";
 }
 
-/** Ruido determinista: mismo t, mismo valor. Nada de Math.random. */
+/**
+ * Ruido determinista: mismo t, mismo valor. Nada de Math.random.
+ *
+ * Usa un hash entero y no Math.sin: la precisión de las funciones
+ * trigonométricas NO está garantizada bit a bit entre motores JS, y la
+ * diferencia se acumulaba a lo largo del arranque hasta romper la hidratación
+ * (servidor y cliente dibujaban coordenadas distintas en el último decimal).
+ * Con enteros de 32 bits el resultado es idéntico en cualquier plataforma.
+ */
 function noise(t: number, seed: number, amp: number) {
-  const x = Math.sin(t * 12.9898 + seed * 78.233) * 43758.5453;
-  return (x - Math.floor(x) - 0.5) * 2 * amp;
+  let x = (Math.round(t * 1000) ^ Math.imul(seed, 0x9e3779b9)) >>> 0;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) >>> 0;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  return (x / 0xffffffff - 0.5) * 2 * amp;
 }
 
 export class Engine {
@@ -95,17 +106,88 @@ export class Engine {
   private mapS = 88;
   private mapSlope = 0;
   private history: Vitals[] = [];
+  private lastCo = 7.4;
 
-  constructor(startAt = 0) {
+  /** Efectos farmacológicos activos, como drug_* en PhysioState del backend. */
+  private drugContractility = 0;
+  private drugSvr = 0;
+  private drugHr = 0;
+  private onset = 0; // s que tarda el fármaco en alcanzar su efecto pleno
+  /** instante de la intervención, null si no se ha aplicado ninguna */
+  interventionAt: number | null = null;
+  interventionKey: string | null = null;
+  private mapAtIntervention = 0;
+  private coAtIntervention = 0;
+  private hrBaseAtIntervention = 0;
+
+  constructor(startAt = 0, intervention?: { at: number; key: string }) {
     const dt = 0.25;
-    for (let i = 0; i < Math.round(startAt / dt); i++) this.step(dt);
+    const steps = Math.round(startAt / dt);
+    for (let i = 0; i < steps; i++) {
+      if (intervention && this.interventionAt === null && this.t >= intervention.at)
+        this.applyIntervention(intervention.key);
+      this.step(dt);
+    }
+  }
+
+  /**
+   * Aplica una intervención. Los coeficientes son los de
+   * Backend/cardiotwin/interventions.py: _inotrope y _vasopressor.
+   *
+   * El inotrópico sube la contractilidad y baja la SVR (vasodilatación
+   * beta-2); el vasopresor hace lo contrario. Esa diferencia es lo que hace
+   * que uno mejore el gasto y el otro solo la presión.
+   */
+  applyIntervention(key: string) {
+    this.interventionAt = this.t;
+    this.interventionKey = key;
+    this.mapAtIntervention = this.mapS;
+    this.coAtIntervention = this.lastCo;
+    // El guion representa la progresión natural de la enfermedad. Una vez se
+    // interviene deja de mandar: a partir de aquí el estado lo decide la
+    // fisiología, no el reloj.
+    this.hrBaseAtIntervention = scriptedHr(this.t);
+
+    if (key === "inotrope") {
+      this.drugContractility += 0.38;
+      this.drugSvr -= 0.22;
+      this.drugHr += 14;
+      this.onset = 45;
+    } else if (key === "vasopressor") {
+      this.drugContractility += 0.12;
+      this.drugSvr += 0.5;
+      this.drugHr += 5;
+      this.onset = 30;
+    } else if (key === "fluid") {
+      this.drugContractility += 0.18;
+      this.onset = 60;
+    }
+  }
+
+  /** 0→1 según el tiempo transcurrido desde la intervención. */
+  private drugRamp() {
+    if (this.interventionAt === null) return 0;
+    if (this.onset <= 0) return 1;
+    return clamp((this.t - this.interventionAt) / this.onset, 0, 1);
   }
 
   step(dt: number): Frame {
     this.t += dt;
     const t = this.t;
 
-    const hrBase = scriptedHr(t);
+    const ramp = this.drugRamp();
+
+    // La taquicardia era compensatoria por gasto bajo: cuando el gasto se
+    // recupera, cede. Se mide sobre el gasto y no sobre la presión, porque un
+    // vasopresor sube la presión sin resolver la causa.
+    const baroRelief =
+      this.interventionAt === null
+        ? 0
+        : clamp((this.lastCo - this.coAtIntervention) * 12, 0, 32);
+
+    const scripted =
+      this.interventionAt === null ? scriptedHr(t) : this.hrBaseAtIntervention;
+    const hrBase = scripted + this.drugHr * ramp - baroRelief;
     const hr = hrBase + noise(t, 1, hrBase * 0.015);
     const rhythm = scriptedRhythm(t, hr);
 
@@ -122,9 +204,24 @@ export class Engine {
     this.contractility += (targetContractility - this.contractility) * dt * 0.4;
 
     // LLENADO ↓ → BOMBEO ↓
-    const sv = SV_MAX * filling * this.contractility;
+    // La SVR es poscarga: en un ventrículo fallido, subirla REDUCE el
+    // volumen sistólico. Es lo que hace que el vasopresor suba la presión
+    // mientras el gasto no mejora (Backend/cardiotwin/interventions.py).
+    const svrEff = this.svr * (1 + this.drugSvr * ramp);
+    const afterload = clamp(1 - (svrEff / SVR_BASE - 1) * 0.3, 0.55, 1.12);
+
+    const svRaw =
+      SV_MAX *
+      filling *
+      this.contractility *
+      (1 + this.drugContractility * ramp) *
+      afterload;
+    // meseta de Frank-Starling: por encima del volumen normal el ventrículo
+    // deja de responder. Solo satura por arriba, no toca el rango basal.
+    const sv = svRaw <= SV_MAX ? svRaw : SV_MAX + (svRaw - SV_MAX) * 0.3;
     const co = (sv * hr) / 1000;
     const ci = co / BSA;
+    this.lastCo = co;
 
     // vasoconstricción compensatoria (barorreflejo, muy simplificado)
     const targetSvr = SVR_BASE * (1 + clamp(75 - this.mapS, 0, 40) * 0.0075);
@@ -132,7 +229,7 @@ export class Engine {
 
     // BOMBEO ↓ → PRESIÓN ↓
     const prevMap = this.mapS;
-    this.mapS = (co * this.svr) / 80 + 4;
+    this.mapS = (co * svrEff) / 80 + 4;
     const map = this.mapS + noise(t, 2, 0.6);
     this.mapSlope += ((this.mapS - prevMap) / dt - this.mapSlope) * dt * 0.15;
 
@@ -141,7 +238,7 @@ export class Engine {
     this.lactate +=
       (perfusion < LACTATE_THRESHOLD
         ? (LACTATE_THRESHOLD - perfusion) * LACTATE_GAIN
-        : -0.06 * this.lactate) * dt;
+        : -0.018 * this.lactate) * dt;
     this.lactate = clamp(this.lactate, 0.5, 18);
 
     const spo2 = 97 - (1 - perfusion) * 24 + noise(t, 3, 0.5);

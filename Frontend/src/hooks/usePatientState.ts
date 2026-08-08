@@ -12,10 +12,13 @@ export function usePatientState({
   startAt = 0,
   frozen = false,
   hz = 4,
+  intervention,
 }: {
   startAt?: number;
   frozen?: boolean;
   hz?: number;
+  /** intervención ya aplicada durante el arranque, para ver la respuesta */
+  intervention?: { at: number; key: string };
 } = {}) {
   // El motor es mutable: cada step() avanza el reloj. Si se instancia en el
   // cuerpo del render, el doble render de StrictMode lo adelanta dos veces y
@@ -23,7 +26,7 @@ export function usePatientState({
   // Creándolo dentro del initializer, cada invocación es independiente y
   // determinista, así que el primer frame siempre es el mismo.
   const [init] = useState(() => {
-    const engine = new Engine(startAt);
+    const engine = new Engine(startAt, intervention);
     const frame = engine.step(0.25);
     return { engine, frame, history: [...engine.getHistory()] };
   });
@@ -42,5 +45,5 @@ export function usePatientState({
     return () => clearInterval(id);
   }, [engine, frozen, hz]);
 
-  return { ...frame, history };
+  return { ...frame, history, engine };
 }

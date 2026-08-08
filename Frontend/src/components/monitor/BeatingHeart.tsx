@@ -7,8 +7,10 @@ import type { Rhythm } from "@/lib/engine";
 
 /** Jitter determinista por latido: en fibrilación los intervalos varían ±25%. */
 function jitter(i: number) {
-  const x = Math.sin(i * 91.317) * 43758.5453;
-  return (x - Math.floor(x) - 0.5) * 2;
+  let x = Math.imul(i + 1, 0x9e3779b9) >>> 0;
+  x = Math.imul(x ^ (x >>> 15), 0x85ebca6b) >>> 0;
+  x = (x ^ (x >>> 13)) >>> 0;
+  return (x / 0xffffffff - 0.5) * 2;
 }
 
 /** Mezcla dos colores hex. t=0 → a, t=1 → b. */

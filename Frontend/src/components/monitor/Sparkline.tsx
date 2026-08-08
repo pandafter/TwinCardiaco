@@ -43,7 +43,7 @@ export function Sparkline({
       />
       <circle
         cx={width}
-        cy={y(values[values.length - 1])}
+        cy={Number(y(values[values.length - 1]).toFixed(2))}
         r="1.8"
         fill={color}
       />
