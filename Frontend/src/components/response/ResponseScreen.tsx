@@ -13,13 +13,11 @@ import {
   ChevronDown,
   Clock,
   Droplet,
-  Flask,
   Gauge,
   Gear,
   HeartRate,
   LogoMark,
   Message,
-  Plus,
   Syringe,
   Users,
   Waves,
@@ -124,7 +122,7 @@ export function ResponseScreen({
 
 /* ------------------------------------------------------------------ topbar */
 
-function TopBar({ vitals }: { vitals: Vitals }) {
+function TopBar({}: { vitals?: Vitals }) {
   return (
     <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2.5">
       <div className="flex items-center gap-5">

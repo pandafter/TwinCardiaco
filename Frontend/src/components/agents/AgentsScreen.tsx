@@ -36,11 +36,13 @@ const ICON: Record<AgentId, typeof AgentCardio> = {
 export function AgentsScreen({
   startAt = 0,
   frozen = false,
+  live = false,
 }: {
   startAt?: number;
   frozen?: boolean;
+  live?: boolean;
 }) {
-  const { vitals, assess } = usePatientState({ startAt, frozen });
+  const { vitals, assess } = usePatientState({ startAt, frozen, live });
   const [selected, setSelected] = useState<AgentId>("cardiology");
   const f = agentFindings(vitals, assess);
 

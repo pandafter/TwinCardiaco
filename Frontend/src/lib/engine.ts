@@ -331,10 +331,15 @@ export class Engine {
     else if (v.ci > 3.5 && v.svr < 800)
       phenotype = "patrón distributivo (gasto alto con resistencia baja)";
 
+    // Si YA está crítico, el tiempo restante es cero: devolver null aquí
+    // ("no cruza") es el mismo falso negativo que el backend corrigió en
+    // time_to_critical(). El monitor muestra 00:00, no "--:--".
     const time_to_critical_s =
-      status === "unstable" && this.mapSlope < -0.005
-        ? clamp((this.mapS - 50) / -this.mapSlope, 0, 99 * 60)
-        : null;
+      status === "critical"
+        ? 0
+        : status === "unstable" && this.mapSlope < -0.005
+          ? clamp((this.mapS - 50) / -this.mapSlope, 0, 99 * 60)
+          : null;
 
     return {
       status,
@@ -368,12 +373,54 @@ export type Level = "ok" | "warn" | "crit";
 export const LEVEL: Record<string, (v: number) => Level> = {
   hr: (v) => (v > 120 ? "crit" : v > 100 || v < 60 ? "warn" : "ok"),
   sbp: (v) => (v < 90 ? "crit" : v < 100 ? "warn" : "ok"),
-  map: (v) => (v < 65 ? "crit" : v < 70 ? "warn" : "ok"),
+  // mismos cortes que assess(): crítico <60, inestable <70. Antes la UI
+  // pintaba crítico en 65 mientras el estado global decía 60: dos verdades.
+  map: (v) => (v < 60 ? "crit" : v < 70 ? "warn" : "ok"),
   spo2: (v) => (v < 92 ? "crit" : v < 95 ? "warn" : "ok"),
   rr: (v) => (v > 26 ? "crit" : v > 22 ? "warn" : "ok"),
   lactate: (v) => (v > 4 ? "crit" : v > 2 ? "warn" : "ok"),
   temp: (v) => (v < 35.5 || v > 38.3 ? "crit" : v < 36 || v > 37.8 ? "warn" : "ok"),
 };
+
+/**
+ * Presentación única del estado hemodinámico. Antes cada pantalla decidía su
+ * color y casi todas pintaban rojo fijo: un paciente estable salía en alarma.
+ */
+export const STATUS_UI: Record<
+  Status,
+  { label: string; color: string; border: string; bg: string; note: string }
+> = {
+  stable: {
+    label: "ESTABLE",
+    color: "var(--ok)",
+    border: "rgba(63,191,127,0.35)",
+    bg: "rgba(63,191,127,0.07)",
+    note: "Sin criterios de inestabilidad. Monitorización continua.",
+  },
+  unstable: {
+    label: "HEMODINÁMICA INESTABLE",
+    color: "var(--warn)",
+    border: "rgba(224,163,64,0.4)",
+    bg: "rgba(224,163,64,0.07)",
+    note: "Deterioro en curso. Requiere evaluación e intervención.",
+  },
+  critical: {
+    label: "ESTADO CRÍTICO",
+    color: "var(--crit)",
+    border: "rgba(229,72,77,0.4)",
+    bg: "rgba(229,72,77,0.07)",
+    note: "Criterios críticos cumplidos. Intervención inmediata.",
+  },
+};
+
+export function trendUI(trend: Trend) {
+  // "empeorando ↑" era ambiguo: ¿sube qué? La flecha ahora es de rumbo.
+  return trend === "worsening"
+    ? { label: "Empeorando", glyph: "↘", color: "var(--crit)" }
+    : trend === "improving"
+      ? { label: "Mejorando", glyph: "↗", color: "var(--ok)" }
+      : { label: "Sin cambios", glyph: "→", color: "var(--warn)" };
+}
 
 export function rhythmLabel(r: Rhythm) {
   return r === "afib_rvr"
@@ -386,6 +433,48 @@ export function rhythmLabel(r: Rhythm) {
 export function mmss(seconds: number) {
   const s = Math.max(0, Math.round(seconds));
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/* --------------------------------------------------------- eventos del caso */
+
+export type CaseEvent = {
+  t: number;
+  strong: string;
+  rest: string;
+  color: string;
+  crit?: boolean;
+};
+
+/**
+ * Eventos derivados de la historia REAL: el primer instante en que cada
+ * variable cruzó su umbral. Antes el feed y la línea de tiempo eran texto
+ * quemado con horas fijas — decían "MAP cayó por debajo de 60" con la MAP
+ * en 88, y eso en una demo es indefendible.
+ */
+export function caseEvents(history: Vitals[]): CaseEvent[] {
+  const out: CaseEvent[] = [];
+  const first = (pred: (v: Vitals) => boolean) => history.find(pred);
+
+  const mk = (
+    v: Vitals | undefined,
+    strong: string,
+    rest: (v: Vitals) => string,
+    color: string,
+    crit = false,
+  ) => {
+    if (v) out.push({ t: v.t, strong, rest: rest(v), color, crit });
+  };
+
+  mk(first((v) => v.hr > 100), "Frecuencia cardiaca", (v) => ` superó 100 bpm (${Math.round(v.hr)})`, "var(--warn)");
+  mk(first((v) => v.rhythm !== "sinus"), "Ritmo", (v) => `: ${rhythmLabel(v.rhythm).toLowerCase()}`, "var(--crit)");
+  mk(first((v) => v.hr > 120), "Taquicardia", () => " sostenida > 120 bpm", "var(--crit)");
+  mk(first((v) => v.map < 70), "MAP", (v) => ` cayó por debajo de 70 mmHg (${Math.round(v.map)})`, "var(--warn)");
+  mk(first((v) => v.lactate > 2), "Lactato", (v) => ` superó 2.0 mmol/L (${v.lactate.toFixed(1)})`, "var(--violet)");
+  mk(first((v) => v.spo2 < 94), "SpO₂", (v) => ` por debajo de 94% (${Math.round(v.spo2)}%)`, "var(--info)");
+  mk(first((v) => v.map < 60), "MAP crítica", (v) => `: ${Math.round(v.map)} mmHg`, "var(--crit)", true);
+  mk(first((v) => v.lactate > 4), "Lactato crítico", (v) => `: ${v.lactate.toFixed(1)} mmol/L`, "var(--crit)", true);
+
+  return out.sort((a, b) => b.t - a.t);
 }
 
 /** Reloj de pared del caso, para los timestamps del feed. */

@@ -1,20 +1,25 @@
 "use client";
 
+import { useState } from "react";
 import { usePatientState } from "@/hooks/usePatientState";
 import {
   LEVEL,
+  STATUS_UI,
   caseClock,
+  caseEvents,
   rhythmLabel,
+  trendUI,
+  type Assessment,
   type Level,
   type Vitals,
 } from "@/lib/engine";
+import { AGENT_META, agentFindings } from "@/lib/agents";
 import {
   AgentCardio,
   AgentOrchestrator,
   AgentPharma,
   AgentPhysio,
   AgentSim,
-  ChevronDown,
   ChevronRight,
   Droplet,
   Flask,
@@ -26,6 +31,7 @@ import {
 } from "@/components/icons";
 import { BottomNav, MonitorActions, TopBar } from "@/components/shell/Shell";
 import { BeatingHeart } from "./BeatingHeart";
+import { CausalChain } from "./CausalChain";
 import { EcgStrip } from "./EcgStrip";
 import { Sparkline } from "./Sparkline";
 import { SERIES, TrendChart } from "./TrendChart";
@@ -46,22 +52,58 @@ const VITAL_ROWS = [
   { key: "temp", label: "Temperatura", unit: "°C", icon: Thermometer, color: "var(--ok)", min: 35, max: 39, digits: 1 },
 ] as const;
 
-const AGENTS = [
-  { name: "Cardiology Agent", state: "Analizando", icon: AgentCardio, color: "var(--crit)", note: "Taquicardia sinusal con signos de deterioro hemodinámico. Reducción de MAP significativa.", at: 33 },
-  { name: "Pharmacology Agent", state: "Evaluando", icon: AgentPharma, color: "var(--violet)", note: "Evaluando intervenciones vasoactivas apropiadas para el estado actual.", at: 32 },
-  { name: "Physiology Agent", state: "Analizando", icon: AgentPhysio, color: "var(--info)", note: "Disminución de perfusión tisular detectada. Lactato en aumento.", at: 31 },
-  { name: "Simulation Agent", state: "Simulando", icon: AgentSim, color: "var(--ok)", note: "Ejecutando escenarios de intervención y proyectando trayectorias.", at: 34 },
-  { name: "Orchestrator", state: "Coordinando", icon: AgentOrchestrator, color: "var(--gold)", note: "Integrando hallazgos de agentes y actualizando consenso.", at: 34 },
-] as const;
+const AGENT_ICON = {
+  cardiology: AgentCardio,
+  pharmacology: AgentPharma,
+  physiology: AgentPhysio,
+  simulation: AgentSim,
+  orchestrator: AgentOrchestrator,
+} as const;
+
+/**
+ * Tarjetas de agente derivadas del estado REAL del motor. Antes eran cinco
+ * strings quemados que citaban valores que el paciente no tenía. Cuando el
+ * backend esté conectado, esto lo reemplazan los eventos `agent.opinion`.
+ */
+function liveAgents(vitals: Vitals, assess: Assessment) {
+  const idle = assess.status === "stable";
+  const f = agentFindings(vitals, assess);
+
+  return AGENT_META.map((m) => {
+    if (idle)
+      return {
+        ...m,
+        state: "En espera",
+        note: "Monitorizando. Sin hallazgos que reportar.",
+      };
+    const note =
+      m.id === "cardiology"
+        ? `${f.cardiology.finding} FC ${Math.round(vitals.hr)} bpm, MAP ${Math.round(vitals.map)} mmHg.`
+        : m.id === "pharmacology"
+          ? f.pharmacology.finding
+          : m.id === "physiology"
+            ? f.physiology.finding
+            : m.id === "simulation"
+              ? "Ejecutando escenarios de intervención y proyectando trayectorias."
+              : f.orchestrator.synthesis;
+    return { ...m, note };
+  });
+}
 
 export function MonitorScreen({
   startAt = 0,
   frozen = false,
+  live = false,
 }: {
   startAt?: number;
   frozen?: boolean;
+  live?: boolean;
 }) {
-  const { vitals, assess, history } = usePatientState({ startAt, frozen });
+  const { vitals, assess, history, controls } = usePatientState({
+    startAt,
+    frozen,
+    live,
+  });
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
@@ -70,11 +112,11 @@ export function MonitorScreen({
       <div className="grid min-h-0 flex-1 grid-cols-[17.4rem_minmax(0,1fr)_20.5rem] gap-2.5 px-3 py-2.5">
         <LeftColumn vitals={vitals} history={history} />
         <CenterColumn vitals={vitals} assess={assess} history={history} />
-        <RightColumn vitals={vitals} />
+        <RightColumn vitals={vitals} assess={assess} history={history} />
       </div>
 
       <BottomNav active="Paciente">
-        <MonitorActions />
+        <MonitorActions controls={controls} />
       </BottomNav>
     </div>
   );
@@ -113,7 +155,10 @@ function LeftColumn({
             className="mt-1.5 h-[5.6rem] w-full"
           />
           <div className="mt-1 text-[0.5625rem] text-lo">
-            Ritmo: <span className="text-crit">{rhythmLabel(vitals.rhythm)}</span>
+            Ritmo:{" "}
+            <span className={vitals.rhythm === "sinus" ? "text-ok" : "text-crit"}>
+              {rhythmLabel(vitals.rhythm)}
+            </span>
           </div>
         </div>
       </Card>
@@ -152,6 +197,16 @@ function VitalRow({
     ? `${Math.round(vitals.sbp)}/${Math.round(vitals.dbp)}`
     : raw.toFixed(row.digits);
 
+  // flecha de tendencia real por vital, no un "↑" fijo en la FC
+  const trendDelta =
+    series.length > 6 ? series[series.length - 1] - series[series.length - 6] : 0;
+  const trendGlyph =
+    Math.abs(trendDelta) < (row.digits ? 0.15 : 2)
+      ? null
+      : trendDelta > 0
+        ? "↑"
+        : "↓";
+
   return (
     <div className="flex items-center gap-2.5">
       <span className="shrink-0" style={{ color: row.color }}>
@@ -166,8 +221,10 @@ function VitalRow({
             {value}
           </span>
           <span className="text-[0.5rem] text-dim">{row.unit}</span>
-          {row.key === "hr" && (
-            <span className="ml-1 text-[0.6rem] text-crit">↑</span>
+          {trendGlyph && (
+            <span className={`ml-1 text-[0.6rem] ${TONE[level]}`}>
+              {trendGlyph}
+            </span>
           )}
         </div>
       </div>
@@ -201,13 +258,20 @@ function CenterColumn({
   history: Vitals[];
 }) {
   const risk = assess.deterioration_risk;
+  const [view, setView] = useState<"3d" | "physio">("3d");
+  const ui = STATUS_UI[assess.status];
+  const trend = trendUI(assess.trend);
 
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
       <Card className="flex min-h-0 flex-[1.05] flex-col overflow-hidden">
         <div className="flex shrink-0 items-center gap-5 border-b border-line px-4">
-          <Tab active>VISTA 3D</Tab>
-          <Tab>VISTA FISIOLÓGICA</Tab>
+          <Tab active={view === "3d"} onClick={() => setView("3d")}>
+            VISTA 3D
+          </Tab>
+          <Tab active={view === "physio"} onClick={() => setView("physio")}>
+            CADENA CAUSAL
+          </Tab>
         </div>
 
         <div className="relative min-h-0 flex-1">
@@ -219,6 +283,10 @@ function CenterColumn({
             }}
           />
 
+          {view === "physio" ? (
+            <CausalChain vitals={vitals} assess={assess} history={history} />
+          ) : (
+            <>
           <BeatingHeart
             hr={vitals.hr}
             rhythm={vitals.rhythm}
@@ -230,7 +298,10 @@ function CenterColumn({
           {/* estado hemodinámico */}
           <Floating className="top-1/2 left-4 w-[10.5rem] -translate-y-1/2">
             <Label>ESTADO HEMODINÁMICO</Label>
-            <div className="mt-1.5 text-[0.9rem] font-semibold text-crit">
+            <div
+              className="mt-1.5 text-[0.9rem] font-semibold"
+              style={{ color: ui.color }}
+            >
               {assess.status === "critical"
                 ? "CRÍTICO"
                 : assess.status === "unstable"
@@ -240,12 +311,8 @@ function CenterColumn({
             <RiskDial value={risk} />
             <div className="mt-2.5 rounded-md border border-line bg-card px-2.5 py-1.5 text-center text-[0.5rem] text-lo">
               Tendencia:{" "}
-              <span className="text-crit">
-                {assess.trend === "worsening"
-                  ? "Empeorando ↑"
-                  : assess.trend === "improving"
-                    ? "Mejorando ↓"
-                    : "Estable →"}
+              <span style={{ color: trend.color }}>
+                {trend.label} {trend.glyph}
               </span>
             </div>
           </Floating>
@@ -276,6 +343,8 @@ function CenterColumn({
                   : "COMPROMETIDA"}
             </div>
           </Floating>
+            </>
+          )}
         </div>
       </Card>
 
@@ -284,10 +353,9 @@ function CenterColumn({
           <span className="text-[0.5625rem] tracking-[0.16em] text-mid">
             TENDENCIAS FISIOLÓGICAS
           </span>
-          <button className="flex items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[0.5625rem] text-mid">
+          <span className="rounded-md border border-line px-2.5 py-1 text-[0.5625rem] text-mid">
             Tiempo real
-            <ChevronDown className="h-[0.6rem] w-[0.6rem]" />
-          </button>
+          </span>
         </div>
 
         <div className="flex shrink-0 gap-4 px-4 pb-1">
@@ -309,37 +377,38 @@ function CenterColumn({
           <TrendChart history={history} />
         </div>
 
+        {/* hitos derivados de la historia real, no horas inventadas */}
         <div className="grid shrink-0 grid-cols-4 gap-2 px-4 pt-1">
-          {[
-            { t: caseClock(30).hhmm, e: "Aumento de FC" },
-            { t: caseClock(55).hhmm, e: "Disminución de MAP" },
-            { t: caseClock(80).hhmm, e: "Lactato en aumento" },
-            {
-              t: caseClock(Math.max(0, vitals.t - 8)).hhmm,
-              e: "Inestabilidad detectada",
-              crit: true,
-            },
-          ].map((c) => (
-            <div
-              key={c.e}
-              className={`rounded-md border px-2.5 py-1.5 ${
-                c.crit
-                  ? "border-[rgba(229,72,77,0.4)] bg-[rgba(229,72,77,0.06)]"
-                  : "border-line bg-card"
-              }`}
-            >
+          {caseEvents(history)
+            .slice(-4)
+            .reverse()
+            .map((c) => (
               <div
-                className={`font-mono text-[0.5625rem] ${c.crit ? "text-crit" : "text-mid"}`}
+                key={c.strong + c.t}
+                className={`rounded-md border px-2.5 py-1.5 ${
+                  c.crit
+                    ? "border-[rgba(229,72,77,0.4)] bg-[rgba(229,72,77,0.06)]"
+                    : "border-line bg-card"
+                }`}
               >
-                {c.t}
+                <div
+                  className={`font-mono text-[0.5625rem] ${c.crit ? "text-crit" : "text-mid"}`}
+                >
+                  {caseClock(c.t).hhmm}
+                </div>
+                <div
+                  className={`mt-0.5 truncate text-[0.5rem] ${c.crit ? "text-crit" : "text-lo"}`}
+                >
+                  {c.strong}
+                  {c.rest}
+                </div>
               </div>
-              <div
-                className={`mt-0.5 text-[0.5rem] ${c.crit ? "text-crit" : "text-lo"}`}
-              >
-                {c.e}
-              </div>
+            ))}
+          {caseEvents(history).length === 0 && (
+            <div className="col-span-4 rounded-md border border-line bg-card px-2.5 py-1.5 text-[0.5rem] text-lo">
+              Sin eventos: el paciente se mantiene dentro de rangos normales.
             </div>
-          ))}
+          )}
         </div>
 
         <div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
@@ -366,14 +435,19 @@ function CenterColumn({
 function Tab({
   children,
   active,
+  onClick,
 }: {
   children: React.ReactNode;
   active?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
+      onClick={onClick}
       className={`-mb-px border-b-2 py-2.5 text-[0.5625rem] tracking-[0.12em] transition-colors ${
-        active ? "border-cyan text-cyan" : "border-transparent text-lo"
+        active
+          ? "border-cyan text-cyan"
+          : "border-transparent text-lo hover:text-mid"
       }`}
     >
       {children}
@@ -472,28 +546,33 @@ function PerfusionScale() {
 
 /* --------------------------------------------------------- columna derecha */
 
-function RightColumn({ vitals }: { vitals: Vitals }) {
-  const now = vitals.t;
-
-  const events = [
-    { c: "var(--ok)", t: now - 1, b: "Simulation Agent", e: " inició 3 escenarios" },
-    { c: "var(--crit)", t: now - 2, b: "Cardiology Agent", e: " detectó deterioro" },
-    { c: "var(--violet)", t: now - 4, b: "Lactato", e: ` aumentó a ${vitals.lactate.toFixed(1)} mmol/L` },
-    { c: "var(--warn)", t: now - 5, b: "MAP", e: " cayó por debajo de 60 mmHg" },
-    { c: "var(--crit)", t: now - 8, b: "Frecuencia cardiaca", e: ` aumentó a ${Math.round(vitals.hr)} bpm` },
-    { c: "var(--ok)", t: now - 10, b: "Nuevo evento", e: " fisiológico recibido" },
-  ];
+function RightColumn({
+  vitals,
+  assess,
+  history,
+}: {
+  vitals: Vitals;
+  assess: Assessment;
+  history: Vitals[];
+}) {
+  const agents = liveAgents(vitals, assess);
+  const active = assess.status !== "stable";
+  const events = caseEvents(history).slice(0, 6);
 
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
       <Card className="flex min-h-0 flex-col">
-        <CardHeader title="AGENTES DE IA" live liveLabel="ACTIVOS" />
+        <CardHeader
+          title="AGENTES DE IA"
+          live={active}
+          liveLabel={active ? "ACTIVOS" : "EN ESPERA"}
+        />
         <div className="flex flex-col">
-          {AGENTS.map((a, i) => {
-            const Icon = a.icon;
+          {agents.map((a, i) => {
+            const Icon = AGENT_ICON[a.id];
             return (
               <div
-                key={a.name}
+                key={a.id}
                 className={`flex items-start gap-2.5 px-3 py-2.5 ${i ? "border-t border-line" : ""}`}
               >
                 <span
@@ -515,7 +594,7 @@ function RightColumn({ vitals }: { vitals: Vitals }) {
                       className="shrink-0 rounded border px-1.5 py-[0.06rem] text-[0.4375rem]"
                       style={{
                         borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
-                        color: a.color,
+                        color: active ? a.color : "var(--text-lo)",
                       }}
                     >
                       {a.state}
@@ -526,7 +605,7 @@ function RightColumn({ vitals }: { vitals: Vitals }) {
                     {a.note}
                   </p>
                   <div className="mt-1 text-right font-mono text-[0.4375rem] text-dim">
-                    {caseClock(now - 60 + a.at).hhmmss}
+                    {caseClock(vitals.t).hhmmss}
                   </div>
                 </div>
               </div>
@@ -540,23 +619,25 @@ function RightColumn({ vitals }: { vitals: Vitals }) {
           <span className="text-[0.5625rem] tracking-[0.14em] text-mid">
             LÍNEA DE EVENTOS EN TIEMPO REAL
           </span>
-          <button className="text-[0.5rem] text-lo hover:text-mid">
-            Ver todos
-          </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col justify-around px-3 py-2">
-          {events.map((e, i) => (
-            <div key={i} className="flex items-center gap-2">
+          {events.length === 0 && (
+            <div className="text-[0.5rem] text-lo">
+              Sin eventos todavía. El paciente está estable.
+            </div>
+          )}
+          {events.map((e) => (
+            <div key={e.strong + e.t} className="flex items-center gap-2">
               <span
                 className="h-[0.3rem] w-[0.3rem] shrink-0 rounded-full"
-                style={{ background: e.c }}
+                style={{ background: e.color }}
               />
               <span className="shrink-0 font-mono text-[0.5rem] text-lo">
                 {caseClock(e.t).hhmmss}
               </span>
               <span className="truncate text-[0.5rem] text-mid">
-                <span className="text-hi">{e.b}</span>
-                {e.e}
+                <span className="text-hi">{e.strong}</span>
+                {e.rest}
               </span>
             </div>
           ))}

@@ -50,13 +50,17 @@ export function BeatingHeart({
   const controls = useAnimationControls();
   const halo = useAnimationControls();
 
-  // el scheduler lee de refs: no queremos reiniciarlo en cada tick de 250 ms
+  // el scheduler lee de refs: no queremos reiniciarlo en cada tick de 250 ms.
+  // La escritura va en un efecto: mutar refs durante el render rompe la regla
+  // react-hooks/refs (y con StrictMode puede escribir dos veces).
   const hrRef = useRef(hr);
   const svRef = useRef(strokeVolume);
   const irregularRef = useRef(rhythm === "afib_rvr");
-  hrRef.current = hr;
-  svRef.current = strokeVolume;
-  irregularRef.current = rhythm === "afib_rvr";
+  useEffect(() => {
+    hrRef.current = hr;
+    svRef.current = strokeVolume;
+    irregularRef.current = rhythm === "afib_rvr";
+  }, [hr, strokeVolume, rhythm]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>;

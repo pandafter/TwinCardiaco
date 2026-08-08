@@ -1,8 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { usePatientState } from "@/hooks/usePatientState";
-import { LEVEL, type Level, type Vitals } from "@/lib/engine";
+import {
+  LEVEL,
+  STATUS_UI,
+  trendUI,
+  type Level,
+  type Vitals,
+} from "@/lib/engine";
 import {
   ACTIONS,
   AGENT_RECOMMENDATIONS,
@@ -78,17 +85,44 @@ const VITALS = [
 export function InterventionsScreen({
   startAt = 0,
   frozen = false,
+  live = false,
 }: {
   startAt?: number;
   frozen?: boolean;
+  live?: boolean;
 }) {
-  const { vitals, assess, history } = usePatientState({ startAt, frozen });
+  const router = useRouter();
+  const { vitals, assess, history, controls } = usePatientState({
+    startAt,
+    frozen,
+    live,
+  });
   const [chosen, setChosen] = useState<string | null>(null);
   const [filter, setFilter] = useState<"todas" | Category>("todas");
 
   const shown = ACTIONS.filter(
     (a) => filter === "todas" || a.categories.includes(filter),
   );
+
+  const chosenAction = ACTIONS.find((a) => a.id === chosen) ?? null;
+  const canApply = !!chosenAction?.engineKey;
+  const now = Math.round(vitals.t);
+
+  /**
+   * Cada intervención se aplica INDIVIDUALMENTE al paciente de la sesión y
+   * lleva a su propia pantalla de respuesta. "Observar" no toca el motor.
+   */
+  const applyChosen = () => {
+    if (!chosenAction?.engineKey) return;
+    if (chosenAction.engineKey === "none") {
+      router.push("/monitor");
+      return;
+    }
+    controls?.apply(chosenAction.engineKey);
+    router.push(
+      `/response?iv=${chosenAction.engineKey}&at=${now}&t=${now}`,
+    );
+  };
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
@@ -102,22 +136,38 @@ export function InterventionsScreen({
           onChoose={setChosen}
           filter={filter}
           onFilter={setFilter}
+          assess={assess}
+          decisionAt={now}
         />
         <AgentColumn />
       </div>
 
       <BottomNav active="Intervenciones" accent="var(--gold)" items={6} underline>
-        <button className="flex items-center gap-2 rounded-lg border border-line-strong px-6 py-2.5 text-[0.625rem] text-mid transition-colors hover:border-lo hover:text-hi">
-          <X className="h-[0.7rem] w-[0.7rem]" />
-          Cancelar
-        </button>
         <a
-          href="/agents"
-          className="flex items-center gap-2.5 rounded-lg border border-[#e5484d] bg-crit px-6 py-2.5 text-[0.625rem] font-medium text-[#1a0708] transition-opacity hover:opacity-90"
+          href="/monitor"
+          className="flex items-center gap-2 rounded-lg border border-line-strong px-6 py-2.5 text-[0.625rem] text-mid transition-colors hover:border-lo hover:text-hi"
         >
-          Intervenir después de simular
-          <ArrowRight className="h-[0.8rem] w-[0.8rem]" />
+          <X className="h-[0.7rem] w-[0.7rem]" />
+          Volver al monitor
         </a>
+        <button
+          onClick={applyChosen}
+          disabled={!canApply}
+          className={`flex items-center gap-2.5 rounded-lg border px-6 py-2.5 text-[0.625rem] font-medium transition-opacity ${
+            canApply
+              ? "border-[#e5484d] bg-crit text-[#1a0708] hover:opacity-90"
+              : "cursor-not-allowed border-line-strong text-lo opacity-60"
+          }`}
+        >
+          {chosenAction
+            ? chosenAction.engineKey === "none"
+              ? "Continuar observando"
+              : canApply
+                ? `Aplicar: ${chosenAction.title}`
+                : "No modelada en el motor"
+            : "Selecciona una intervención"}
+          <ArrowRight className="h-[0.8rem] w-[0.8rem]" />
+        </button>
       </BottomNav>
     </div>
   );
@@ -134,6 +184,8 @@ function PatientColumn({
   assess: ReturnType<typeof usePatientState>["assess"];
   history: Vitals[];
 }) {
+  const ui = STATUS_UI[assess.status];
+  const trend = trendUI(assess.trend);
   const status =
     assess.status === "critical"
       ? "CRÍTICO"
@@ -169,7 +221,10 @@ function PatientColumn({
         </div>
 
         <div className="shrink-0 px-3 pb-1">
-          <span className="rounded border border-[rgba(229,72,77,0.4)] bg-[rgba(229,72,77,0.1)] px-2 py-[0.15rem] text-[0.5rem] tracking-[0.1em] text-crit">
+          <span
+            className="rounded border px-2 py-[0.15rem] text-[0.5rem] tracking-[0.1em]"
+            style={{ borderColor: ui.border, background: ui.bg, color: ui.color }}
+          >
             {status}
           </span>
         </div>
@@ -233,19 +288,18 @@ function PatientColumn({
           TENDENCIA GLOBAL
         </div>
         <div className="mt-1.5 flex items-center justify-between">
-          <span className="text-[0.8125rem] font-medium text-crit">
+          <span
+            className="text-[0.8125rem] font-medium"
+            style={{ color: trend.color }}
+          >
             {assess.trend === "worsening"
               ? "Deterioro rápido"
               : assess.trend === "improving"
                 ? "Mejorando"
                 : "Sin cambios"}
           </span>
-          <span className="text-[0.8rem] text-crit">
-            {assess.trend === "worsening"
-              ? "↘"
-              : assess.trend === "improving"
-                ? "↗"
-                : "→"}
+          <span className="text-[0.8rem]" style={{ color: trend.color }}>
+            {trend.glyph}
           </span>
         </div>
         <div className="mt-1 text-[0.4375rem] text-dim">
@@ -277,13 +331,18 @@ function ActionColumn({
   onChoose,
   filter,
   onFilter,
+  assess,
+  decisionAt,
 }: {
   shown: Action[];
   chosen: string | null;
   onChoose: (id: string) => void;
   filter: string;
   onFilter: (f: "todas" | Category) => void;
+  assess: ReturnType<typeof usePatientState>["assess"];
+  decisionAt: number;
 }) {
+  const worsening = assess.status !== "stable";
   return (
     <div className="flex min-h-0 min-w-0 flex-col">
       <div className="shrink-0">
@@ -296,16 +355,29 @@ function ActionColumn({
         </p>
       </div>
 
-      <div className="mt-2.5 flex shrink-0 items-center gap-3 rounded-[0.6rem] border border-[rgba(229,72,77,0.32)] bg-[rgba(229,72,77,0.06)] px-4 py-2.5">
-        <AlertTriangle className="h-[1rem] w-[1rem] shrink-0 text-crit" />
-        <div className="text-[0.5625rem] leading-[1.6] text-mid">
-          El paciente está en deterioro hemodinámico progresivo.
-          <br />
-          <span className="font-medium text-crit">
-            Actuar ahora puede cambiar el desenlace.
-          </span>
+      {worsening ? (
+        <div className="mt-2.5 flex shrink-0 items-center gap-3 rounded-[0.6rem] border border-[rgba(229,72,77,0.32)] bg-[rgba(229,72,77,0.06)] px-4 py-2.5">
+          <AlertTriangle className="h-[1rem] w-[1rem] shrink-0 text-crit" />
+          <div className="text-[0.5625rem] leading-[1.6] text-mid">
+            El paciente está en deterioro hemodinámico progresivo.
+            <br />
+            <span className="font-medium text-crit">
+              Actuar ahora puede cambiar el desenlace.
+            </span>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="mt-2.5 flex shrink-0 items-center gap-3 rounded-[0.6rem] border border-[rgba(63,191,127,0.3)] bg-[rgba(63,191,127,0.05)] px-4 py-2.5">
+          <Info className="h-[1rem] w-[1rem] shrink-0 text-ok" />
+          <div className="text-[0.5625rem] leading-[1.6] text-mid">
+            El paciente está estable.
+            <br />
+            <span className="font-medium text-ok">
+              Puedes explorar escenarios sin urgencia de intervenir.
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="mt-2.5 flex shrink-0 items-center gap-1 border-b border-line">
         {FILTERS.map((f) => {
@@ -350,7 +422,7 @@ function ActionColumn({
           </div>
         </div>
         <a
-          href="/agents"
+          href={`/compare?at=${decisionAt}&t=${decisionAt}`}
           className="flex shrink-0 items-center gap-2 rounded-lg border border-[rgba(90,169,230,0.4)] bg-[rgba(90,169,230,0.1)] px-4 py-2.5 text-[0.5625rem] text-info transition-colors hover:bg-[rgba(90,169,230,0.16)]"
         >
           Ver simulaciones (what-if)
@@ -463,19 +535,26 @@ function ActionCard({
             {a.time}
           </span>
         </div>
-        <button
-          onClick={onChoose}
-          className="mt-2.5 w-full rounded-md border py-2.5 text-[0.625rem] transition-colors"
-          style={{
-            borderColor: `color-mix(in srgb, ${a.color} 45%, transparent)`,
-            color: a.color,
-            background: chosen
-              ? `color-mix(in srgb, ${a.color} 16%, transparent)`
-              : "transparent",
-          }}
-        >
-          {chosen ? "Seleccionada" : "Seleccionar"}
-        </button>
+        {a.engineKey === null ? (
+          // acción no modelada por el motor: se dice, no se finge
+          <div className="mt-2.5 w-full rounded-md border border-line py-2.5 text-center text-[0.5625rem] text-lo">
+            No modelada en el motor (MVP)
+          </div>
+        ) : (
+          <button
+            onClick={onChoose}
+            className="mt-2.5 w-full rounded-md border py-2.5 text-[0.625rem] transition-colors"
+            style={{
+              borderColor: `color-mix(in srgb, ${a.color} 45%, transparent)`,
+              color: a.color,
+              background: chosen
+                ? `color-mix(in srgb, ${a.color} 16%, transparent)`
+                : "transparent",
+            }}
+          >
+            {chosen ? "Seleccionada ✓" : "Seleccionar"}
+          </button>
+        )}
       </div>
     </div>
   );
