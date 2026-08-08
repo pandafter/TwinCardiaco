@@ -37,6 +37,7 @@ from cardiotwin.sync import EventBus, PortalSync
 from cardiotwin.runtime import SimulationRuntime
 from cardiotwin.agents import Orchestrator, AGENTS
 from cardiotwin.ask import translate, to_dose
+from cardiotwin.cases import CASES, resolve
 from cardiotwin.interventions import INTERVENTIONS, assess_state, project_scenario
 from cardiotwin.physiology import PhysiologyEngine
 
@@ -209,12 +210,37 @@ async def portal_token(req: TokenReq):
 # Control del escenario
 # ==========================================================================
 class ShockReq(BaseModel):
+    # `case` es la via que usa el front: manda "tsv" y no necesita saber que
+    # por dentro eso es una FA a 168 sin dano miocardico.
+    case: Optional[str] = None
+    # La taxonomia del motor sigue aceptandose para curl y para ensayar.
     type: str = "cardiogenic"
     severity: float = 1.0
 
 
+@app.get("/api/cases")
+async def cases():
+    """Los cuatro casos, para que el front no los tenga que duplicar."""
+    return {"cases": [c.as_dict() for c in CASES.values()]}
+
+
 @app.post("/api/scenario/shock")
 async def shock(req: ShockReq):
+    """
+    Dispara el escenario. Dos formas de pedirlo, una sola de aplicarlo.
+
+    Un caso clinico elige insulto y ritmo de partida, y NO adelanta el reloj:
+    el paciente arranca estable y se deteriora en pantalla, que es lo que el
+    guion de la demo tiene que ensenar.
+    """
+    if req.case is not None:
+        case = resolve(req.case)
+        if case is None:
+            raise HTTPException(400, f"Caso desconocido: {req.case}. "
+                                     f"Conocidos: {', '.join(CASES)}")
+        case.apply(ctx["runtime"].engine)
+        return {"ok": True, **case.as_dict()}
+
     if req.type not in ("none", "cardiogenic", "hypovolemic", "septic"):
         raise HTTPException(400, f"Tipo desconocido: {req.type}")
     ctx["runtime"].engine.trigger_shock(req.type, req.severity)
