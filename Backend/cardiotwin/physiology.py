@@ -58,6 +58,25 @@ V_BLOOD_NORMAL = 4900.0      # mL (700+3350 no tensionados + ~850 tensionados)
 
 SV_MAX = 130.0               # mL, meseta de Frank-Starling
 K_STARLING = 4.5             # mmHg
+CVP_REF = 5.0                # mmHg, PVC de un corazon en reposo (referencia)
+
+# --- Fibrilacion auricular -------------------------------------------------
+# La patada auricular aporta el 20-30% del llenado ventricular, y aporta MAS
+# cuanto mas rigido esta el ventriculo: en un corazon sano perderla se tolera,
+# en uno que ya falla es la diferencia entre compensado y descompensado. Es el
+# mismo patron que la sensibilidad a la poscarga que ya modela _recompute.
+ATRIAL_KICK_HEALTHY = 0.18   # fraccion de llenado que aporta en un corazon sano
+ATRIAL_KICK_FAILING = 0.35   # ...y en un ventriculo fallido
+
+# Coste anadido de los intervalos irregulares. Los ciclos cortos llenan menos
+# y la curva de Starling es concava, asi que el promedio de latidos irregulares
+# rinde menos que un latido regular a la frecuencia media. Es lo que hace que
+# una FA sea peor que una taquicardia sinusal al mismo ritmo.
+#
+# HONESTIDAD: este modelo es de flujo medio, no simula latido a latido. El
+# coste va como una constante montada sobre el mismo flag que la patada
+# auricular, no como intervalos R-R de verdad.
+RR_IRREGULARITY_COST = 0.06
 
 SVR_NORMAL = 1250.0          # dyn*s*cm^-5
 HR_INTRINSIC = 70.0
@@ -99,6 +118,8 @@ class PhysioState:
     hemoglobin: float = HB_NORMAL
     venous_recruitment: float = 0.0       # mL reclutados por venoconstriccion
     infusion_running: bool = False        # hay una infusion activa
+    # 1.0 = auricula contrayendo (sinusal); 0.0 = fibrilando, sin patada
+    atrial_kick: float = 1.0
 
     # --- Efectos farmacologicos activos ---
     drug_contractility: float = 0.0       # delta multiplicativo
@@ -123,6 +144,7 @@ class PhysioState:
     o2er: float = 0.25
     o2_deficit: float = 0.0
     rhythm: str = "sinusal"
+    filling_pct: float = 100.0            # llenado vs. sinusal en reposo
     perfusion_index: float = 1.0
     mvo2: float = 0.87                    # demanda miocardica de O2 (relativa)
     coronary_supply: float = 1.0          # aporte coronario (relativo)
@@ -155,6 +177,8 @@ class PhysioState:
             "do2": round(self.do2),
             "o2er": round(self.o2er, 3),
             "rhythm": self.rhythm,
+            # El front ya lo declara en su contrato y lo oculta si no llega
+            "filling_pct": round(self.filling_pct, 1),
             "perfusion_index": round(self.perfusion_index, 3),
             "mvo2": round(self.mvo2, 3),
             "myocardial_o2_balance": round(self.myocardial_o2_balance, 3),
@@ -194,7 +218,18 @@ class PhysiologyEngine:
 
         # --- Frank-Starling con meseta ---
         eff_c = max(0.05, s.contractility * (1.0 + s.drug_contractility))
-        sv = SV_MAX * eff_c * s.cvp / (K_STARLING + s.cvp)
+
+        # Perder la patada auricular no baja la PVC medida: baja el volumen
+        # que llega de verdad al ventriculo. Por eso el descuento va sobre la
+        # presion de llenado EFECTIVA del termino de Starling, y s.cvp -que es
+        # una presion que se mide- se queda como esta.
+        kick_share = (ATRIAL_KICK_HEALTHY
+                      + (ATRIAL_KICK_FAILING - ATRIAL_KICK_HEALTHY)
+                      * (1.0 - min(eff_c, 1.0)))
+        lost_filling = (kick_share + RR_IRREGULARITY_COST) * (1.0 - s.atrial_kick)
+        filling = s.cvp * (1.0 - lost_filling)
+
+        sv = SV_MAX * eff_c * filling / (K_STARLING + filling)
 
         # --- Poscarga. Un corazon fallido es MUCHO mas sensible a ella:
         #     por eso el vasopresor hunde el gasto en shock cardiogenico.
@@ -204,8 +239,17 @@ class PhysiologyEngine:
 
         # --- Taquicardia extrema acorta el llenado diastolico ---
         eff_hr = max(20.0, s.heart_rate + s.drug_hr)
-        if eff_hr > 130.0:
-            sv *= max(0.40, 1.0 - (eff_hr - 130.0) * 0.007)
+        tachy_filling = (max(0.40, 1.0 - (eff_hr - 130.0) * 0.007)
+                         if eff_hr > 130.0 else 1.0)
+        sv *= tachy_filling
+
+        # Eficiencia del llenado: el eslabon LLENADO de la cadena causal.
+        # Mide lo BIEN que llena el ventriculo en cada latido -diastole corta
+        # por taquicardia, patada auricular ausente- y a proposito NO incluye
+        # la precarga: un ventriculo congestivo tiene mucho volumen y llena
+        # mal, y meter la precarga aqui daria un 140% en un paciente que se
+        # esta muriendo, rompiendo la lectura de PULSO ^ -> LLENADO v.
+        s.filling_pct = round(100.0 * tachy_filling * (1.0 - lost_filling), 1)
 
         s.stroke_volume = max(1.0, sv)
         s.cardiac_output = eff_hr * s.stroke_volume / 1000.0
@@ -253,10 +297,17 @@ class PhysiologyEngine:
         s.coronary_supply = s.dbp * (1.0 - 0.0032 * max(0.0, eff_hr - 60.0)) / 78.0
         s.myocardial_o2_balance = s.coronary_supply - s.mvo2
 
-        s.rhythm = self._rhythm(eff_hr)
+        s.rhythm = self._rhythm(eff_hr, s.atrial_kick)
 
     @staticmethod
-    def _rhythm(hr: float) -> str:
+    def _rhythm(hr: float, atrial_kick: float = 1.0) -> str:
+        # Fibrilando se reporta siempre "afib_rvr" porque es el unico nombre de
+        # ritmo fibrilado que el contrato del front conoce (live.ts RHYTHM), y
+        # ninguna de las 4 intervenciones controla la frecuencia: una FA lenta
+        # no es alcanzable en este modelo. Si algun dia entra un frenador de
+        # ritmo, hay que anadir "afib" a los dos lados a la vez.
+        if atrial_kick < 0.5:
+            return "afib_rvr"
         if hr > 150: return "taquicardia sinusal severa"
         if hr > 100: return "taquicardia sinusal"
         if hr < 50:  return "bradicardia sinusal"
@@ -355,6 +406,28 @@ class PhysiologyEngine:
     def trigger_shock(self, shock_type: ShockType, severity: float = 1.0) -> None:
         self.s.shock_type = shock_type
         self.s.shock_severity = _bound(severity, 0.0, 5.0)
+
+    def trigger_afib(self, rate: float = 150.0) -> None:
+        """
+        Fibrilacion auricular con respuesta ventricular rapida.
+
+        Dos cosas a la vez, que es lo que la hace mala: las auriculas dejan de
+        contraer -se pierde el 20-30% del llenado- y la conduccion AV deja
+        pasar impulsos deprisa. `rate` mueve la base del barorreflejo, no la
+        frecuencia directamente, para que el reflejo siga corrigiendo encima:
+        la FA fija el suelo del ritmo, no lo congela.
+        """
+        self.s.atrial_kick = 0.0
+        self._hr_base = _bound(rate, 90.0, 180.0)
+        self.s.heart_rate = max(self.s.heart_rate, _bound(rate, 90.0, 180.0) * 0.85)
+        self._recompute()
+
+    def restore_sinus(self) -> None:
+        """Vuelve a ritmo sinusal. No la usa ninguna intervencion: existe para
+        poder reiniciar el escenario sin construir un motor nuevo."""
+        self.s.atrial_kick = 1.0
+        self._hr_base = HR_INTRINSIC
+        self._recompute()
 
     def clone(self) -> "PhysiologyEngine":
         """Copia independiente. Base de las proyecciones what-if."""
