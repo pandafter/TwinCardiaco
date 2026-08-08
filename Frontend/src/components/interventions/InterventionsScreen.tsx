@@ -2,8 +2,15 @@
 
 import { useState } from "react";
 import { usePatientState } from "@/hooks/usePatientState";
-import { LEVEL, rhythmLabel, type Level, type Vitals } from "@/lib/engine";
-import { ACTIONS, AGENT_RECOMMENDATIONS, type Action, type Effect } from "@/lib/interventions";
+import { LEVEL, type Level, type Vitals } from "@/lib/engine";
+import {
+  ACTIONS,
+  AGENT_RECOMMENDATIONS,
+  FILTERS,
+  type Action,
+  type Category,
+  type Effect,
+} from "@/lib/interventions";
 import { AGENT_META } from "@/lib/agents";
 import {
   AgentCardio,
@@ -13,7 +20,6 @@ import {
   AgentSim,
   AlertTriangle,
   ArrowRight,
-  Bell,
   CheckSquare,
   Clock,
   Droplet,
@@ -23,14 +29,17 @@ import {
   HeartRate,
   Info,
   Lungs,
+  Plus,
   Pressure,
   Syringe,
   Tube,
   Vial,
+  Waves,
+  X,
 } from "@/components/icons";
 import { BottomNav, TopBar } from "@/components/shell/Shell";
-import { EcgStrip } from "@/components/monitor/EcgStrip";
-import { BodyDiagram } from "./BodyDiagram";
+import { BeatingHeart } from "@/components/monitor/BeatingHeart";
+import { Sparkline } from "@/components/monitor/Sparkline";
 
 const TONE: Record<Level, string> = {
   ok: "text-ok",
@@ -39,6 +48,14 @@ const TONE: Record<Level, string> = {
 };
 
 const ACTION_ICON = { syringe: Syringe, tube: Tube, vial: Vial, eye: Eye };
+
+const FILTER_ICON: Record<string, typeof Syringe> = {
+  todas: Waves,
+  medicamento: Syringe,
+  procedimiento: Tube,
+  diagnostico: Vial,
+  monitoreo: Eye,
+};
 
 const AGENT_ICON = {
   cardiology: AgentCardio,
@@ -49,12 +66,12 @@ const AGENT_ICON = {
 };
 
 const VITALS = [
-  { key: "hr", label: "Frecuencia cardíaca", unit: "bpm", icon: HeartRate, color: "var(--crit)", dir: "up", digits: 0 },
-  { key: "bp", label: "Presión arterial", unit: "mmHg", icon: Pressure, color: "var(--crit)", dir: "down", digits: 0 },
-  { key: "map", label: "MAP", unit: "mmHg", icon: Gauge, color: "var(--crit)", dir: "down", digits: 0 },
-  { key: "spo2", label: "SpO₂", unit: "%", icon: Droplet, color: "var(--info)", dir: "down", digits: 0 },
-  { key: "rr", label: "Frecuencia respiratoria", unit: "rpm", icon: Lungs, color: "var(--warn)", dir: "up", digits: 0 },
-  { key: "lactate", label: "Lactato", unit: "mmol/L", icon: Flask, color: "var(--violet)", dir: "up", digits: 1 },
+  { key: "hr", label: "Frecuencia cardíaca", unit: "bpm", icon: HeartRate, color: "var(--crit)", min: 40, max: 180, digits: 0 },
+  { key: "bp", label: "Presión arterial", unit: "mmHg", icon: Pressure, color: "var(--crit)", min: 40, max: 120, digits: 0 },
+  { key: "map", label: "MAP", unit: "mmHg", icon: Gauge, color: "var(--crit)", min: 40, max: 100, digits: 0 },
+  { key: "spo2", label: "SpO₂", unit: "%", icon: Droplet, color: "var(--info)", min: 70, max: 100, digits: 0 },
+  { key: "rr", label: "Frecuencia respiratoria", unit: "rpm", icon: Lungs, color: "var(--warn)", min: 8, max: 40, digits: 0 },
+  { key: "lactate", label: "Lactato", unit: "mmol/L", icon: Flask, color: "var(--violet)", min: 0, max: 10, digits: 1 },
 ] as const;
 
 export function InterventionsScreen({
@@ -64,24 +81,42 @@ export function InterventionsScreen({
   startAt?: number;
   frozen?: boolean;
 }) {
-  const { vitals, assess } = usePatientState({ startAt, frozen });
+  const { vitals, assess, history } = usePatientState({ startAt, frozen });
   const [chosen, setChosen] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"todas" | Category>("todas");
+
+  const shown = ACTIONS.filter(
+    (a) => filter === "todas" || a.categories.includes(filter),
+  );
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
       <TopBar vitals={vitals} assess={assess} compact />
 
-      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[14.5rem_minmax(0,1fr)_16.5rem] gap-2.5 px-3 py-2.5">
-        <PatientColumn vitals={vitals} assess={assess} />
-        <ActionColumn chosen={chosen} onChoose={setChosen} />
+      <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[15rem_minmax(0,1fr)_16.5rem] gap-2.5 px-3 py-2.5">
+        <PatientColumn vitals={vitals} assess={assess} history={history} />
+        <ActionColumn
+          shown={shown}
+          chosen={chosen}
+          onChoose={setChosen}
+          filter={filter}
+          onFilter={setFilter}
+        />
         <AgentColumn />
       </div>
 
-      <BottomNav active="Intervenciones" accent="var(--gold)" items={7} underline>
-        <button className="flex items-center gap-2 rounded-lg border border-[#e5484d] bg-crit px-6 py-2.5 text-[0.625rem] font-medium text-[#1a0708] transition-opacity hover:opacity-90">
-          <Bell className="h-[0.75rem] w-[0.75rem]" />
-          Emergencia
+      <BottomNav active="Intervenciones" accent="var(--gold)" items={6} underline>
+        <button className="flex items-center gap-2 rounded-lg border border-line-strong px-6 py-2.5 text-[0.625rem] text-mid transition-colors hover:border-lo hover:text-hi">
+          <X className="h-[0.7rem] w-[0.7rem]" />
+          Cancelar
         </button>
+        <a
+          href="/agents"
+          className="flex items-center gap-2.5 rounded-lg border border-[#e5484d] bg-crit px-6 py-2.5 text-[0.625rem] font-medium text-[#1a0708] transition-opacity hover:opacity-90"
+        >
+          Intervenir después de simular
+          <ArrowRight className="h-[0.8rem] w-[0.8rem]" />
+        </a>
       </BottomNav>
     </div>
   );
@@ -92,10 +127,19 @@ export function InterventionsScreen({
 function PatientColumn({
   vitals,
   assess,
+  history,
 }: {
   vitals: Vitals;
   assess: ReturnType<typeof usePatientState>["assess"];
+  history: Vitals[];
 }) {
+  const status =
+    assess.status === "critical"
+      ? "CRÍTICO"
+      : assess.status === "unstable"
+        ? "INESTABLE"
+        : "ESTABLE";
+
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
       <Card className="flex flex-col">
@@ -103,25 +147,37 @@ function PatientColumn({
           ESTADO ACTUAL DEL PACIENTE
         </div>
 
-        <BodyDiagram
-          perfusion={vitals.perfusion_index}
-          className="h-[9.5rem] w-full shrink-0"
-        />
-
-        <div className="shrink-0 px-3 pt-2">
-          <div className="text-[0.5rem] tracking-[0.14em] text-dim">
-            ESTADO HEMODINÁMICO
-          </div>
-          <div className="mt-1 text-[0.95rem] font-semibold text-crit">
-            {assess.status === "critical"
-              ? "CRÍTICO"
-              : assess.status === "unstable"
-                ? "INESTABLE"
-                : "ESTABLE"}
-          </div>
+        <div className="relative h-[7.5rem] shrink-0">
+          <BeatingHeart
+            hr={vitals.hr}
+            rhythm={vitals.rhythm}
+            strokeVolume={vitals.sv}
+            perfusion={vitals.perfusion_index}
+            className="absolute top-1/2 left-[26%] h-[104%] w-[44%] -translate-x-1/2 -translate-y-1/2"
+          />
+          <svg
+            viewBox="0 0 100 40"
+            className="absolute top-1/2 right-2 h-[2.2rem] w-[42%] -translate-y-1/2"
+            fill="none"
+          >
+            <path
+              d="M2 24h14l5-16 7 30 5-20 4 6h60"
+              stroke="var(--crit)"
+              strokeWidth="1.6"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          </svg>
         </div>
 
-        <div className="flex flex-col gap-4 px-3 pt-3.5 pb-3.5">
+        <div className="shrink-0 px-3 pb-1">
+          <span className="rounded border border-[rgba(229,72,77,0.4)] bg-[rgba(229,72,77,0.1)] px-2 py-[0.15rem] text-[0.5rem] tracking-[0.1em] text-crit">
+            {status}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-3 px-3 pt-2.5 pb-3">
           {VITALS.map((v) => {
             const isBp = v.key === "bp";
             const raw = isBp
@@ -131,6 +187,10 @@ function PatientColumn({
               ? LEVEL.sbp(vitals.sbp)
               : (LEVEL[v.key]?.(raw) ?? "ok");
             const Icon = v.icon;
+            const series = history
+              .filter((_, i) => i % 8 === 0)
+              .slice(-22)
+              .map((h) => (isBp ? h.sbp : (h[v.key as keyof Vitals] as number)));
             return (
               <div key={v.key} className="flex items-center gap-2">
                 <span className="shrink-0" style={{ color: v.color }}>
@@ -151,35 +211,61 @@ function PatientColumn({
                     <span className="text-[0.4375rem] text-dim">{v.unit}</span>
                   </div>
                 </div>
-                <span
-                  className="shrink-0 text-[0.7rem]"
-                  style={{ color: v.dir === "up" ? "var(--crit)" : "var(--info)" }}
-                >
-                  {v.dir === "up" ? "↑" : "↓"}
-                </span>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Sparkline
+                    values={series}
+                    min={v.min}
+                    max={v.max}
+                    color={v.color}
+                    width={52}
+                    height={24}
+                  />
+                  <div className="flex h-[24px] w-[1.1rem] flex-col justify-between text-[0.4375rem] text-dim">
+                    <span>{v.max}</span>
+                    <span>{v.min}</span>
+                  </div>
+                </div>
               </div>
             );
           })}
         </div>
       </Card>
 
-      <Card className="shrink-0">
-        <div className="flex items-center justify-between px-3 py-2">
-          <span className="text-[0.5625rem] tracking-[0.14em] text-mid">
-            ECG EN VIVO
+      <Card className="shrink-0 p-3">
+        <div className="text-[0.5625rem] tracking-[0.14em] text-mid">
+          TENDENCIA GLOBAL
+        </div>
+        <div className="mt-1.5 flex items-center justify-between">
+          <span className="text-[0.8125rem] font-medium text-crit">
+            {assess.trend === "worsening"
+              ? "Deterioro rápido"
+              : assess.trend === "improving"
+                ? "Mejorando"
+                : "Sin cambios"}
           </span>
-          <span className="text-[0.5rem] text-crit">
-            {rhythmLabel(vitals.rhythm)}
+          <span className="text-[0.8rem] text-crit">
+            {assess.trend === "worsening"
+              ? "↘"
+              : assess.trend === "improving"
+                ? "↗"
+                : "→"}
           </span>
         </div>
-        <EcgStrip
-          hr={vitals.hr}
-          rhythm={vitals.rhythm}
-          amplitude={Math.min(1.15, Math.max(0.55, vitals.sv / 80))}
-          className="h-[4.2rem] w-full"
-        />
-        <div className="px-3 pt-1 pb-2.5 text-[0.4375rem] text-dim">
-          Velocidad: 25 mm/s &nbsp;|&nbsp; Ganancia: 10 mm/mV
+        <div className="mt-1 text-[0.4375rem] text-dim">
+          Comparado con los últimos 15 min
+        </div>
+        <div className="mt-2">
+          <Sparkline
+            values={history
+              .filter((_, i) => i % 6 === 0)
+              .slice(-40)
+              .map((h) => h.map)}
+            min={40}
+            max={100}
+            color="var(--crit)"
+            width={196}
+            height={26}
+          />
         </div>
       </Card>
     </div>
@@ -189,21 +275,27 @@ function PatientColumn({
 /* --------------------------------------------------------------- columna 2 */
 
 function ActionColumn({
+  shown,
   chosen,
   onChoose,
+  filter,
+  onFilter,
 }: {
+  shown: Action[];
   chosen: string | null;
   onChoose: (id: string) => void;
+  filter: string;
+  onFilter: (f: "todas" | Category) => void;
 }) {
   return (
     <div className="flex min-h-0 min-w-0 flex-col">
       <div className="shrink-0">
         <h1 className="text-[0.8125rem] font-medium tracking-[0.08em] text-hi">
-          SELECCIONA UNA INTERVENCIÓN
+          DECISIÓN DE INTERVENCIÓN
         </h1>
         <p className="mt-1 text-[0.5625rem] text-mid">
-          Elige la mejor acción basada en el estado actual y las recomendaciones
-          de los agentes.
+          Selecciona la mejor acción basada en el estado actual y las
+          recomendaciones de los agentes.
         </p>
       </div>
 
@@ -212,12 +304,35 @@ function ActionColumn({
         <div className="text-[0.5625rem] leading-[1.6] text-mid">
           El paciente está en deterioro hemodinámico progresivo.
           <br />
-          <span className="font-medium text-crit">Cada segundo cuenta.</span>
+          <span className="font-medium text-crit">
+            Actuar ahora puede cambiar el desenlace.
+          </span>
         </div>
       </div>
 
+      <div className="mt-2.5 flex shrink-0 items-center gap-1 border-b border-line">
+        {FILTERS.map((f) => {
+          const Icon = FILTER_ICON[f.id];
+          const on = f.id === filter;
+          return (
+            <button
+              key={f.id}
+              onClick={() => onFilter(f.id)}
+              className={`-mb-px flex items-center gap-1.5 border-b-2 px-3.5 py-2.5 text-[0.5625rem] transition-colors ${
+                on
+                  ? "border-gold text-gold"
+                  : "border-transparent text-lo hover:text-mid"
+              }`}
+            >
+              <Icon className="h-[0.75rem] w-[0.75rem]" />
+              {f.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="mt-2.5 grid grid-cols-5 gap-2.5">
-        {ACTIONS.map((a) => (
+        {shown.map((a) => (
           <ActionCard
             key={a.id}
             a={a}
@@ -231,18 +346,17 @@ function ActionColumn({
         <Info className="h-[1rem] w-[1rem] shrink-0 text-info" />
         <div className="flex-1">
           <div className="text-[0.625rem] text-info">
-            Revisa las simulaciones de escenarios antes de decidir.
+            Todas las intervenciones se simularán antes de aplicarse.
           </div>
           <div className="mt-1 text-[0.5rem] text-lo">
-            Compara el posible impacto de cada intervención en la evolución del
-            paciente.
+            Podrás comparar los escenarios proyectados y sus posibles resultados.
           </div>
         </div>
         <a
           href="/agents"
-          className="flex shrink-0 items-center gap-2 rounded-lg border border-line-strong px-4 py-2.5 text-[0.5625rem] text-mid transition-colors hover:border-lo hover:text-hi"
+          className="flex shrink-0 items-center gap-2 rounded-lg border border-[rgba(90,169,230,0.4)] bg-[rgba(90,169,230,0.1)] px-4 py-2.5 text-[0.5625rem] text-info transition-colors hover:bg-[rgba(90,169,230,0.16)]"
         >
-          Ver simulaciones
+          Ver simulaciones (what-if)
           <ArrowRight className="h-[0.7rem] w-[0.7rem]" />
         </a>
       </div>
@@ -260,40 +374,53 @@ function ActionCard({
   onChoose: () => void;
 }) {
   const Icon = ACTION_ICON[a.icon];
+  const isIntervention = a.kind === "INTERVENCIÓN";
 
   return (
     <div
-      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-[0.6rem] border bg-[#0a0e14] p-3 transition-colors"
+      className="flex min-w-0 flex-col rounded-[0.6rem] border bg-[#0a0e14] p-3 transition-colors"
       style={{
-        borderColor: chosen
-          ? a.color
-          : a.id === "labs"
-            ? "var(--line-gold)"
-            : "var(--line)",
+        borderColor: chosen ? a.color : "var(--line)",
+        boxShadow: chosen
+          ? `0 0 1.6rem -0.7rem ${a.color}`
+          : undefined,
       }}
     >
-      <div className="flex items-center gap-2">
-        <Icon className="h-[1rem] w-[1rem] shrink-0" style={{ color: a.color }} />
-        <div className="min-w-0">
-          <div className="truncate text-[0.4375rem] tracking-[0.14em] text-dim">
-            {a.kind}
-          </div>
-          <div
-            className="text-[0.75rem] leading-tight font-semibold"
+      <div className="flex items-center gap-1.5">
+        {!isIntervention && (
+          <Icon
+            className="h-[0.65rem] w-[0.65rem] shrink-0"
             style={{ color: a.color }}
-          >
-            {a.letter}
-          </div>
-        </div>
+          />
+        )}
+        <span
+          className="truncate text-[0.4375rem] tracking-[0.14em]"
+          style={{ color: isIntervention ? a.color : "var(--text-dim)" }}
+        >
+          {isIntervention ? `${a.kind} ${a.letter}` : a.kind}
+        </span>
       </div>
 
-      <div className="mt-2.5 text-[0.6875rem] leading-tight text-hi">
+      <div className="mt-1.5 text-[0.6875rem] leading-tight font-medium text-hi">
         {a.title}
       </div>
-      {a.subtitle && (
-        <div className="mt-0.5 text-[0.5rem] text-lo">{a.subtitle}</div>
-      )}
-      <p className="mt-2 text-[0.5rem] leading-[1.55] text-mid">
+      <div className="mt-0.5 h-[0.75rem] text-[0.5rem] text-lo">
+        {a.subtitle ?? ""}
+      </div>
+
+      {/* el icono grande ancla visualmente cada tarjeta */}
+      <div
+        className="mt-2 flex h-[2.6rem] w-[2.6rem] items-center justify-center rounded-[0.5rem] border"
+        style={{
+          borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
+          background: `color-mix(in srgb, ${a.color} 9%, transparent)`,
+          color: a.color,
+        }}
+      >
+        <Icon className="h-[1.25rem] w-[1.25rem]" />
+      </div>
+
+      <p className="mt-2.5 text-[0.5rem] leading-[1.55] text-mid">
         {a.description}
       </p>
 
@@ -311,7 +438,10 @@ function ActionCard({
       {a.checks && (
         <ul className="mt-1.5 space-y-1">
           {a.checks.map((c) => (
-            <li key={c} className="flex items-center gap-1.5 text-[0.5rem] text-mid">
+            <li
+              key={c}
+              className="flex items-center gap-1.5 text-[0.5rem] text-mid"
+            >
               <CheckSquare className="h-[0.6rem] w-[0.6rem] shrink-0 text-lo" />
               {c}
             </li>
@@ -380,14 +510,17 @@ function AgentColumn() {
     <div className="flex min-h-0 flex-col gap-2.5">
       <Card className="flex flex-col">
         <div className="shrink-0 px-3 py-2.5 text-[0.5625rem] tracking-[0.14em] text-mid">
-          RECOMENDACIONES DE AGENTES
+          RECOMENDACIONES DE LOS AGENTES
         </div>
-        <div className="flex flex-col gap-4 px-3 pb-3.5">
-          {AGENT_RECOMMENDATIONS.map((r) => {
+        <div className="flex flex-col">
+          {AGENT_RECOMMENDATIONS.map((r, i) => {
             const meta = AGENT_META.find((m) => m.id === r.id)!;
             const Icon = AGENT_ICON[r.id as keyof typeof AGENT_ICON];
             return (
-              <div key={r.id} className="flex items-start gap-2">
+              <div
+                key={r.id}
+                className={`flex items-start gap-2 px-3 py-2.5 ${i ? "border-t border-line" : ""}`}
+              >
                 <span
                   className="flex h-[1.8rem] w-[1.8rem] shrink-0 items-center justify-center rounded-[0.4rem] border"
                   style={{
@@ -413,6 +546,32 @@ function AgentColumn() {
                   <p className="mt-1 text-[0.5rem] leading-[1.5] text-mid">
                     {r.text}
                   </p>
+
+                  {r.confidence !== undefined && (
+                    <div className="mt-1.5">
+                      <div className="flex items-baseline gap-1 text-[0.4375rem] text-lo">
+                        {r.confidenceLabel ?? "Confianza"}:
+                        <span className="font-mono text-mid">
+                          {r.confidence}%
+                        </span>
+                      </div>
+                      <div className="mt-1 h-[0.15rem] overflow-hidden rounded-full bg-line">
+                        <div
+                          className="h-full rounded-full"
+                          style={{
+                            width: `${r.confidence}%`,
+                            background: meta.color,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                  {r.note && (
+                    <div className="mt-1.5 flex items-center gap-1 text-[0.4375rem] text-lo">
+                      <Plus className="h-[0.5rem] w-[0.5rem]" />
+                      {r.note}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -420,23 +579,17 @@ function AgentColumn() {
         </div>
       </Card>
 
-      <Card className="shrink-0 p-3">
-        <div className="text-[0.5625rem] tracking-[0.14em] text-mid">
-          ACUERDO ACTUAL
-        </div>
-        <div className="mt-2 flex items-baseline gap-1.5">
-          <span className="font-mono text-[0.9rem] font-semibold text-hi">76%</span>
-          <span className="text-[0.5rem] text-lo">Confianza del consenso</span>
-        </div>
-        <div className="mt-2 h-[0.2rem] overflow-hidden rounded-full bg-line">
-          <div className="h-full w-[76%] rounded-full bg-warn" />
-        </div>
-        <div className="mt-2.5 flex items-start gap-1.5 rounded-md border border-line px-2.5 py-2">
-          <Info className="mt-[0.1rem] h-[0.6rem] w-[0.6rem] shrink-0 text-dim" />
-          <span className="text-[0.4375rem] leading-[1.5] text-lo">
-            Los agentes coinciden en la necesidad de intervenir ahora.
+      <Card className="shrink-0 border-[rgba(224,163,64,0.3)] bg-[rgba(224,163,64,0.04)] p-3">
+        <div className="flex items-center gap-1.5">
+          <AlertTriangle className="h-[0.7rem] w-[0.7rem] text-warn" />
+          <span className="text-[0.5rem] tracking-[0.12em] text-warn">
+            NOTA DEL ORQUESTADOR
           </span>
         </div>
+        <p className="mt-2 text-[0.5rem] leading-[1.6] text-mid">
+          El deterioro es rápido. Intervenir en los próximos 2 minutos puede
+          mejorar significativamente la trayectoria del paciente.
+        </p>
       </Card>
     </div>
   );

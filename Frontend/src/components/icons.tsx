@@ -350,3 +350,9 @@ export const Clock = ({ className }: P) => (
     <path d="M12 7v5.2l3.4 2" />
   </svg>
 );
+
+export const X = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M6 6l12 12M18 6 6 18" />
+  </svg>
+);

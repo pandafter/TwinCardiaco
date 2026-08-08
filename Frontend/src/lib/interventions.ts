@@ -15,9 +15,13 @@ export type EffectDir = "up" | "down" | "flat";
 
 export type Effect = { dir: EffectDir; label: string; risk?: boolean };
 
+export type Category = "medicamento" | "procedimiento" | "diagnostico" | "monitoreo";
+
 export type Action = {
   id: string;
   letter: string;
+  /** un catéter central es procedimiento y a la vez fuente de datos */
+  categories: Category[];
   kind: "INTERVENCIÓN" | "PROCEDIMIENTO" | "DIAGNÓSTICO" | "OBSERVAR";
   icon: "syringe" | "tube" | "vial" | "eye";
   title: string;
@@ -38,6 +42,7 @@ export const ACTIONS: Action[] = [
   {
     id: "inotrope",
     letter: "A",
+    categories: ["medicamento"],
     kind: "INTERVENCIÓN",
     icon: "syringe",
     title: "Dobutamina",
@@ -59,6 +64,7 @@ export const ACTIONS: Action[] = [
   {
     id: "vasopressor",
     letter: "B",
+    categories: ["medicamento"],
     kind: "INTERVENCIÓN",
     icon: "syringe",
     title: "Noradrenalina",
@@ -82,6 +88,7 @@ export const ACTIONS: Action[] = [
   {
     id: "airway",
     letter: "C",
+    categories: ["procedimiento"],
     kind: "PROCEDIMIENTO",
     icon: "tube",
     title: "Intubación y ventilación",
@@ -99,22 +106,26 @@ export const ACTIONS: Action[] = [
     color: "var(--violet)",
   },
   {
-    id: "labs",
+    id: "central-line",
     letter: "D",
-    kind: "DIAGNÓSTICO",
+    categories: ["procedimiento", "diagnostico"],
+    kind: "PROCEDIMIENTO",
     icon: "vial",
-    title: "Laboratorios y gasometría",
-    description: "Obtiene información clave para guiar la intervención.",
+    title: "Acceso venoso central",
+    subtitle: "Monitoreo invasivo",
+    description:
+      "Permite administración de vasoactivos y monitoreo hemodinámico avanzado.",
     engineKey: null,
-    sectionTitle: "INFORMACIÓN QUE APORTA",
-    checks: ["Electrolitos", "Gasometría arterial", "Función renal", "Troponina / BNP"],
-    timeLabel: "TIEMPO ESTIMADO",
+    sectionTitle: "BENEFICIOS",
+    checks: ["Acceso para fármacos", "Monitoreo continuo", "Medición de PVC/ScvO₂"],
+    timeLabel: "INICIO ESTIMADO",
     time: "5–10 min",
     color: "var(--gold)",
   },
   {
     id: "none",
     letter: "E",
+    categories: ["monitoreo"],
     kind: "OBSERVAR",
     icon: "eye",
     title: "Monitoreo estrecho",
@@ -131,25 +142,45 @@ export const ACTIONS: Action[] = [
   },
 ];
 
-export const AGENT_RECOMMENDATIONS = [
+export const AGENT_RECOMMENDATIONS: {
+  id: string;
+  text: string;
+  confidence?: number;
+  confidenceLabel?: string;
+  note?: string;
+}[] = [
   {
     id: "cardiology",
-    text: "Paciente con bajo gasto cardíaco y signos de congestión. Recomiendo soporte inotrópico.",
+    text: "Recomienda iniciar dobutamina para mejorar el gasto cardíaco y la perfusión.",
+    confidence: 89,
   },
   {
     id: "pharmacology",
-    text: "Dobutamina puede mejorar gasto cardíaco. Vigilar riesgo de arritmias.",
+    text: "Dobutamina es adecuada. Vigilar riesgo de taquiarritmias e hipotensión.",
+    confidence: 82,
   },
   {
     id: "physiology",
-    text: "Perfusión tisular comprometida. Lactato en aumento. Intervención urgente recomendada.",
+    text: "Perfusión muy comprometida. Intervención inotrópica o vasoactiva necesaria.",
+    confidence: 86,
   },
   {
     id: "simulation",
-    text: "Ejecutando escenarios para todas las intervenciones disponibles.",
+    text: "Ejecutando escenarios para todas las intervenciones disponibles...",
+    note: "3 escenarios en evaluación",
   },
   {
     id: "orchestrator",
-    text: "Procesando hallazgos y generando recomendación integrada.",
+    text: "Hay consenso parcial a favor de iniciar terapia inotrópica.",
+    confidence: 76,
+    confidenceLabel: "Confianza del consenso",
   },
+];
+
+export const FILTERS: { id: "todas" | Category; label: string }[] = [
+  { id: "todas", label: "Todas las acciones" },
+  { id: "medicamento", label: "Medicamentos" },
+  { id: "procedimiento", label: "Procedimientos" },
+  { id: "diagnostico", label: "Diagnóstico" },
+  { id: "monitoreo", label: "Monitoreo" },
 ];
