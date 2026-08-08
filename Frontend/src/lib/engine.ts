@@ -62,7 +62,7 @@ const SYSTOLE = 0.28; // s, la sístole no se acorta tanto como el ciclo
 const FILL_DEN = 0.445; // s de diástole para llenado completo
 const SVR_BASE = 900;
 const BSA = 1.73;
-const LACTATE_THRESHOLD = 0.85; // perfusión por debajo de la cual se acumula
+const LACTATE_THRESHOLD = 0.75; // perfusión por debajo de la cual se acumula
 const LACTATE_GAIN = 0.5;
 
 const clamp = (v: number, lo: number, hi: number) =>
@@ -234,7 +234,15 @@ export class Engine {
     this.mapSlope += ((this.mapS - prevMap) / dt - this.mapSlope) * dt * 0.15;
 
     // PRESIÓN ↓ → OXÍGENO ↓
-    const perfusion = clamp(this.mapS / 85, 0, 1);
+    // La perfusión tisular depende del FLUJO, no solo de la presión. Con solo
+    // la MAP, un vasopresor "resolvía" la hipoperfusión subiendo el número
+    // sin mover el gasto — que es precisamente el error que el gemelo debe
+    // dejar en evidencia.
+    const perfusion = clamp(
+      (this.mapS / 85) * 0.45 + (co / 7.4) * 0.55,
+      0,
+      1,
+    );
     this.lactate +=
       (perfusion < LACTATE_THRESHOLD
         ? (LACTATE_THRESHOLD - perfusion) * LACTATE_GAIN
