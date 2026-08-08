@@ -124,30 +124,33 @@ class PortalSync:
     """
     Adaptador de Portal.
 
-    VERIFICAR CONTRA LA DOCUMENTACION ANTES DE USAR
-    -----------------------------------------------
-    Lo que esta confirmado de la spec publica:
-      - hosts, modelo de credenciales, y que /v1/tokens acuña JWT de usuario
+    VERIFICADO CONTRA LA DOCUMENTACION (agosto 2026)
+    ------------------------------------------------
+      - hosts y modelo de credenciales
+      - publicacion de servidor: POST /v1/channels/{id}/messages con
+        {senderId, type, kind, content}. `senderId` obligatorio, `kind`
+        solo admite "text", `content` limitado a 2 KB
+      - /v1/tokens acuña el JWT de usuario y SI acepta ACL por canal via
+        el mapa `channels` (ver mint_user_token)
       - los errores traen {code, reason} y el header x-portal-error
-      - los endpoints WebSocket NO estan en el OpenAPI; van documentados
-        aparte como prosa (handshake, tipos de frame, codigos de rechazo)
 
-    Lo que NO esta confirmado y hay que rellenar de la doc:
-      - la ruta y el cuerpo exactos de publicacion desde servidor
-      - si existen permisos de escritura por canal (ver mas abajo)
-
-    Si Portal NO tiene ACL de escritura por canal, la mitigacion es la misma
-    que ya esta implementada: el backend valida toda accion de cliente y
-    republica la version autoritativa. No confies en el canal, confia en la
-    validacion.
+    La ACL por canal no nos exime de validar: toda accion de cliente se
+    valida en el backend y se republica la version autoritativa. La ACL
+    evita que un cliente escriba donde no debe; la validacion evita que
+    escriba basura donde si puede.
     """
 
     API_HOST = "https://api.useportal.co"
     REALTIME_HOST = "https://realtime.useportal.co"
 
-    # TODO: confirmar contra la doc de Portal
+    # Verificado contra la doc de Portal (agosto 2026).
     PUBLISH_PATH = "/v1/channels/{channel}/messages"
     TOKEN_PATH = "/v1/tokens"
+
+    # Portal rechaza un `content` de mas de 2 KB. No es una recomendacion:
+    # el mensaje se pierde entero, y perderlo en silencio es peor que
+    # publicar una version recortada.
+    MAX_CONTENT_BYTES = 2048
 
     def __init__(self, sim_id: str,
                  secret_key: Optional[str] = None,
@@ -176,6 +179,41 @@ class PortalSync:
         return "events"
 
     # --- publicacion -------------------------------------------------
+    @staticmethod
+    def _slim(event_type: str, payload: dict) -> dict:
+        """
+        Recorta lo que no cabe en 2 KB.
+
+        `simulation.result` trae 4 ramas x ~30 muestras de 20 campos: son
+        decenas de KB. Por el canal va el RESUMEN con el que la UI decide,
+        y las series completas se piden por HTTP. Publicar la trayectoria
+        entera no solo revienta el limite: no aporta nada que el front no
+        pueda pedir cuando de verdad la necesita.
+        """
+        if event_type != "simulation.result":
+            return payload
+
+        origin = payload.get("from_state") or {}
+        return {
+            "from_state": {k: origin.get(k)
+                           for k in ("map", "co", "spo2", "lactate", "hr")},
+            "branches": [
+                {
+                    "key": sc.get("intervention"),
+                    "label": sc.get("name"),
+                    "final_status": sc.get("final_status"),
+                    "time_to_critical_s": sc.get("time_to_critical_s"),
+                    "deltas": {k: (sc.get("deltas") or {}).get(k)
+                               for k in ("map", "co", "lactate",
+                                         "myocardial_o2_balance")},
+                }
+                for sc in payload.get("scenarios", []) if sc.get("deltas")
+            ],
+            "best_by_metric": payload.get("best_by_metric"),
+            # Donde estan las series completas, para que el front no las adivine
+            "series_at": "/api/whatif",
+        }
+
     async def publish(self, ev: Event) -> None:
         """
         Publica un evento del servidor. Los fallos se tragan a proposito:
@@ -185,14 +223,32 @@ class PortalSync:
         if not self.enabled:
             return
         ch = self.channel(self.route(ev.type))
+
+        # El envelope es EL MISMO que viaja por SSE, a proposito: el front
+        # parsea igual venga de Portal o del respaldo, y cambiar de
+        # transporte no obliga a tocar una linea de la UI.
+        content = {"payload": self._slim(ev.type, ev.payload),
+                   "id": ev.id, "ts": ev.ts,
+                   "sim_time": ev.sim_time, "source": ev.source}
+
+        size = len(json.dumps(content, ensure_ascii=False).encode("utf-8"))
+        if size > self.MAX_CONTENT_BYTES:
+            # Mejor no mandarlo y que se vea en /health que mandarlo y que
+            # Portal lo rechace en silencio.
+            self._note_failure(f"{ev.type} excede 2 KB ({size} B)")
+            return
+
         try:
             url = self.API_HOST + self.PUBLISH_PATH.format(channel=ch)
             async with self.session.post(
                 url,
                 headers={"Authorization": f"Bearer {self.secret_key}",
                          "Content-Type": "application/json"},
-                json={"type": ev.type, "payload": ev.payload,
-                      "id": ev.id, "ts": ev.ts, "sim_time": ev.sim_time},
+                # senderId es OBLIGATORIO en publicacion de servidor, y
+                # `kind` solo admite "text" en v1: `type` es nuestro
+                # discriminador de aplicacion, no el de Portal.
+                json={"senderId": "server", "type": ev.type,
+                      "kind": "text", "content": content},
                 timeout=3,
             ) as r:
                 if r.status >= 400:
