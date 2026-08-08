@@ -312,3 +312,41 @@ export const Message = ({ className }: P) => (
     <path d="M20.5 12.4a7.6 7.6 0 0 1-8.2 7.6c-.9 0-1.7-.1-2.5-.4L4.5 21l1.5-4.6a7.4 7.4 0 0 1-1-3.8 7.6 7.6 0 0 1 7.7-7.6 7.6 7.6 0 0 1 7.8 7.4Z" />
   </svg>
 );
+
+/* ------------------------------------------------------- intervenciones */
+
+export const Syringe = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M17.4 3.4 20.6 6.6M18.6 5.4l-2.6 2.6M9.4 12.6l2 2M11.4 10.6l2 2" />
+    <path d="M16 8 8.8 15.2l-3.2.8.8-3.2L13.6 5.6a1.4 1.4 0 0 1 2 0l.4.4a1.4 1.4 0 0 1 0 2Z" />
+    <path d="m6.4 17.6-2.8 2.8" />
+  </svg>
+);
+
+export const Tube = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M18.8 3.6 20.4 5.2a2 2 0 0 1 0 2.8l-9.6 9.6-4.4 1.2 1.2-4.4L17.2 4.8a1.1 1.1 0 0 1 1.6 0Z" />
+    <path d="m14.4 6.4 3.2 3.2" />
+  </svg>
+);
+
+export const Vial = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M9.4 3h5.2M10.2 3v5.8l-3.6 8.4c-.7 1.6.4 3.4 2.2 3.4h6.4c1.8 0 2.9-1.8 2.2-3.4l-3.6-8.4V3" />
+    <path d="M7.8 14.6h8.4" />
+  </svg>
+);
+
+export const Eye = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M2.4 12S6 5.6 12 5.6 21.6 12 21.6 12 18 18.4 12 18.4 2.4 12 2.4 12Z" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+export const Clock = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <circle cx="12" cy="12" r="8.6" />
+    <path d="M12 7v5.2l3.4 2" />
+  </svg>
+);

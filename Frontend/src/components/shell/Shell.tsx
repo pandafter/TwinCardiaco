@@ -144,7 +144,7 @@ const Divider = () => <div className="my-1 w-px shrink-0 bg-line" />;
 export const NAV_ITEMS = [
   { label: "Paciente", icon: HeartRate, href: "/monitor" },
   { label: "Agentes", icon: NavAgents, href: "/agents" },
-  { label: "Intervenciones", icon: CheckSquare, href: "#" },
+  { label: "Intervenciones", icon: CheckSquare, href: "/interventions" },
   { label: "Simulaciones", icon: NavSimulations, href: "#" },
   { label: "Resultados", icon: NavResults, href: "#" },
   { label: "Historial", icon: NavHistory, href: "#" },
