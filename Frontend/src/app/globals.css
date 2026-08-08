@@ -84,10 +84,13 @@
   }
 }
 
-/* La demo corre a 1840×1230. Diseñamos contra la referencia de 1280 de ancho
-   y escalamos todo con la raíz, así rem y spacing de Tailwind escalan solos. */
+/* Diseñamos contra la referencia de 1280×853 y escalamos todo con la raíz,
+   así rem y spacing de Tailwind escalan solos.
+   Se toma el MENOR de ancho y alto: escalar solo por ancho hace que en una
+   pantalla ancha y baja el contenido se salga por abajo. 80 = 1280/16 y
+   53.3 = 853/16. A 1840×1230 da 23px, que es la resolución de la demo. */
 html {
-  font-size: clamp(11px, calc(100vw / 1280 * 16), 26px);
+  font-size: clamp(11px, min(100vw / 80, 100vh / 53.3), 44px);
 }
 
 body {
