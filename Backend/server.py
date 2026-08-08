@@ -36,7 +36,8 @@ from pydantic import BaseModel
 from cardiotwin.sync import EventBus, PortalSync
 from cardiotwin.runtime import SimulationRuntime
 from cardiotwin.agents import Orchestrator, AGENTS
-from cardiotwin.interventions import INTERVENTIONS, assess_state
+from cardiotwin.ask import translate, to_dose
+from cardiotwin.interventions import INTERVENTIONS, assess_state, project_scenario
 from cardiotwin.physiology import PhysiologyEngine
 
 SIM_ID = os.environ.get("CARDIOTWIN_SIM_ID", "demo")
@@ -64,8 +65,10 @@ async def lifespan(app: FastAPI):
             pass
     runtime.orchestrator = Orchestrator(bus, client=client)
 
+    # `client` se guarda, no solo el booleano: /api/ask lo necesita para
+    # traducir preguntas. Si es None, ask.py cae a sus reglas deterministas.
     ctx.update(bus=bus, portal=portal, runtime=runtime, session=session,
-               llm=bool(client))
+               client=client, llm=bool(client))
 
     task = asyncio.create_task(runtime.run())
     print(f"[cardiotwin] runtime activo | portal={portal.enabled} "
@@ -260,6 +263,47 @@ class WhatIfReq(BaseModel):
 async def whatif(req: WhatIfReq):
     """Ramas what-if. Corre en thread aparte: no congela el monitor."""
     return await ctx["runtime"].run_whatif(req.interventions, req.horizon_s)
+
+
+class AskReq(BaseModel):
+    question: str
+
+
+@app.post("/api/ask")
+async def ask(req: AskReq):
+    """
+    Pregunta en lenguaje natural -> parametros -> simulacion.
+
+    Es el punto 3 del proyecto: sin esto hay cuatro botones, con esto hay
+    escenarios infinitos que no se pueden construir sin un modelo de lenguaje.
+
+    La IA solo traduce a {intervention, efficacy, delay_s}. El motor
+    determinista calcula la trayectoria. Por eso no puede alucinar una cifra
+    clinica: el espacio de salida es cerrado y se valida en ask.py.
+    """
+    parsed = await translate(req.question, ctx.get("client"))
+
+    if not parsed["supported"]:
+        # Fuera de alcance NO es un error: es una respuesta legitima y se
+        # devuelve 200. Un 4xx aqui haria que el front lo pintara como fallo.
+        return parsed
+
+    rt = ctx["runtime"]
+    await ctx["bus"].emit("simulation.started", {
+        "question": req.question,
+        "intervention": parsed["intervention"],
+        "echo": parsed["echo"],
+        "source": parsed.get("source", "rules"),
+    }, sim_time=rt.engine.s.t)
+
+    # En un hilo aparte: son ~1800 pasos de ODE y bloquearian el event loop,
+    # congelando el monitor de todos los conectados mientras se responde a uno.
+    sim = await asyncio.to_thread(
+        project_scenario, rt.engine, parsed["intervention"],
+        to_dose(parsed["intervention"], parsed["efficacy"]),
+        900.0, 30.0, 0.5, parsed["delay_s"],
+    )
+    return {**parsed, "simulation": sim}
 
 
 @app.post("/api/deliberate")
