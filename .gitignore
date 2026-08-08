@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Entornos virtuales
+.venv/
+venv/
+
+# Secretos. Ninguna clave entra al repo: la sk_ de Portal y la de Anthropic
+# van en el entorno del servidor, nunca versionadas.
+.env
+.env.local
