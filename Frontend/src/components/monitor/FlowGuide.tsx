@@ -1,5 +1,6 @@
 "use client";
 
+import { AnimatePresence, motion } from "motion/react";
 import type { Assessment } from "@/lib/engine";
 
 /**
@@ -15,8 +16,8 @@ export type Phase = 0 | 1 | 2 | 3 | 4;
 
 const STEPS: { label: string; hint: string }[] = [
   { label: "Observa", hint: "El paciente está estable. Mira sus signos vitales." },
-  { label: "Se deteriora", hint: "Algo cambió. Sigue la cadena de arriba: el pulso sube y todo lo demás cae." },
-  { label: "La IA analiza", hint: "Los agentes están leyendo el mismo estado. Mira la columna derecha." },
+  { label: "Se deteriora", hint: "Algo cambió: el pulso sube y todo lo demás cae detrás." },
+  { label: "La IA analiza", hint: "Tres agentes leen el mismo estado y no coinciden. Abre «Lo que dice la IA»." },
   { label: "Decide", hint: "Pasa el mouse por las opciones de abajo para ver a dónde lleva cada una." },
   { label: "Consecuencia", hint: "Intervención aplicada. Observa cómo cambia la trayectoria." },
 ];
@@ -35,22 +36,27 @@ export function phaseOf(
 
 export function FlowGuide({ phase }: { phase: Phase }) {
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-1.5">
-      <div className="flex items-center gap-1.5">
+    <nav
+      aria-label="Progreso del caso"
+      className="flex shrink-0 items-center gap-3 border-b border-line bg-shell px-4 py-1.5"
+    >
+      <ol className="flex items-center gap-1">
         {STEPS.map((s, i) => {
           const done = i < phase;
           const now = i === phase;
           return (
-            <span key={s.label} className="flex items-center gap-1.5">
-              <span
-                className="flex items-center gap-1.5 rounded-full border px-2.5 py-[0.15rem] text-[0.5rem] transition-colors"
+            <li key={s.label} className="flex items-center gap-1">
+              <motion.span
+                animate={{ scale: now ? 1 : 0.97 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="relative flex items-center gap-1.5 rounded-full border px-2.5 py-[0.2rem] text-micro transition-colors duration-500"
                 style={{
                   borderColor: now
                     ? "var(--gold)"
                     : done
                       ? "rgba(63,191,127,0.3)"
                       : "var(--line)",
-                  background: now ? "rgba(200,155,72,0.1)" : "transparent",
+                  background: now ? "var(--gold-soft)" : "transparent",
                   color: now
                     ? "var(--gold)"
                     : done
@@ -58,21 +64,43 @@ export function FlowGuide({ phase }: { phase: Phase }) {
                       : "var(--text-dim)",
                 }}
               >
-                <span className="font-mono text-[0.4375rem]">
-                  {done ? "✓" : i + 1}
-                </span>
+                {now && (
+                  <motion.span
+                    layoutId="flow-halo"
+                    transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+                    className="absolute inset-0 rounded-full"
+                    style={{ boxShadow: "0 0 0 1px var(--gold)" }}
+                  />
+                )}
+                <span className="num font-mono">{done ? "✓" : i + 1}</span>
                 {s.label}
-              </span>
+              </motion.span>
               {i < STEPS.length - 1 && (
-                <span className="text-[0.5rem] text-dim">›</span>
+                <span
+                  className="text-micro transition-colors duration-500"
+                  style={{ color: done ? "var(--ok)" : "var(--text-dim)" }}
+                >
+                  ›
+                </span>
               )}
-            </span>
+            </li>
           );
         })}
-      </div>
+      </ol>
 
       {/* qué se espera de ti AHORA */}
-      <span className="text-[0.5625rem] text-mid">{STEPS[phase].hint}</span>
-    </div>
+      <AnimatePresence mode="wait">
+        <motion.span
+          key={phase}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -5 }}
+          transition={{ duration: 0.28 }}
+          className="text-label text-mid"
+        >
+          {STEPS[phase].hint}
+        </motion.span>
+      </AnimatePresence>
+    </nav>
   );
 }

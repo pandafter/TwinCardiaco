@@ -5,6 +5,7 @@ const BASE = process.env.SHOT_URL ?? 'http://localhost:3210'
 const ROUTES = process.argv.slice(2).length ? process.argv.slice(2) : ['/', '/monitor']
 
 const browser = await puppeteer.launch({
+  userDataDir: 'design/.chrome-profile',
   defaultViewport: { width: 1840, height: 1230 },
 })
 const page = await browser.newPage()

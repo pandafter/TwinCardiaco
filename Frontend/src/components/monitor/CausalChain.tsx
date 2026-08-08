@@ -140,18 +140,37 @@ export function CausalChain({
                 </div>
               </div>
               {i < LINKS.length - 1 && (
-                <span
-                  className="shrink-0 text-[0.9rem] transition-colors duration-500"
-                  style={{
-                    color: worsening
-                      ? "var(--crit)"
-                      : improving
-                        ? "var(--ok)"
-                        : "var(--text-dim)",
-                    transitionDelay: `${i * 120 + 60}ms`,
-                  }}
-                >
-                  →
+                <span className="relative flex shrink-0 items-center">
+                  <span
+                    className="text-[0.9rem] transition-colors duration-500"
+                    style={{
+                      color: worsening
+                        ? "var(--crit)"
+                        : improving
+                          ? "var(--ok)"
+                          : "var(--text-dim)",
+                      transitionDelay: `${i * 120 + 60}ms`,
+                    }}
+                  >
+                    →
+                  </span>
+                  {/* Un pulso que viaja eslabón a eslabón. La cadena es el
+                      argumento del producto: si solo cambia de color, se lee
+                      como cinco cajas; con el pulso se lee como causa. */}
+                  {moving && (
+                    <span
+                      className="pointer-events-none absolute inset-0 flex items-center justify-center"
+                      aria-hidden
+                    >
+                      <span
+                        className="h-[0.25rem] w-[0.25rem] rounded-full"
+                        style={{
+                          background: tone,
+                          animation: `chain-pulse 2.4s ${i * 0.28}s ease-in-out infinite`,
+                        }}
+                      />
+                    </span>
+                  )}
                 </span>
               )}
             </div>

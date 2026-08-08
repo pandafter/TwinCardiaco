@@ -28,6 +28,9 @@ if (!(await isUp())) {
 }
 
 const browser = await puppeteer.launch({
+  // Chrome pide un perfil temporal en /var/folders; en entornos con el temp
+  // del sistema restringido eso falla con EACCES antes de abrir nada.
+  userDataDir: 'design/.chrome-profile',
   defaultViewport: { width: W, height: H, deviceScaleFactor: 1 },
 })
 const page = await browser.newPage()

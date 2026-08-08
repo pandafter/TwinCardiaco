@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import type { Assessment, Vitals } from "@/lib/engine";
 import type { AgentOutput } from "@/lib/agents";
@@ -31,7 +32,7 @@ const fade = {
   initial: { opacity: 0, y: 14 },
   animate: { opacity: 1, y: 0 },
   exit: { opacity: 0, y: -10 },
-  transition: { duration: 0.45, ease },
+  transition: { duration: 0.42, ease },
 };
 
 export type SceneKey = "body" | "agents" | "decide" | "result";
@@ -72,85 +73,119 @@ export function Stage({
   // hacía imposible moverse por la pantalla.
   const auto: SceneKey = projection ? "decide" : SCENE[phase];
   const scene: SceneKey = pinned ?? auto;
+  const tabsRef = useRef<HTMLDivElement>(null);
+
+  // Flechas para moverse entre pestañas: es lo que espera cualquiera que
+  // navegue con teclado, y no costaba nada.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const i = TABS.findIndex((t) => t.key === scene);
+    const next =
+      (i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length;
+    onPin(TABS[next].key);
+    tabsRef.current
+      ?.querySelectorAll<HTMLButtonElement>("[role=tab]")
+      [next]?.focus();
+  };
 
   return (
     <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-[0.7rem] border border-line bg-card">
       {/* navegación entre escenas: siempre disponible, no solo automática */}
-      <div className="flex shrink-0 items-center gap-1 border-b border-line px-2">
+      <div
+        ref={tabsRef}
+        role="tablist"
+        aria-label="Escenas del caso"
+        onKeyDown={onKeyDown}
+        className="flex shrink-0 items-center gap-1 border-b border-line px-2"
+      >
         {TABS.map((t) => {
           const on = scene === t.key;
           const next = auto === t.key && !pinned;
           return (
             <button
               key={t.key}
+              role="tab"
+              aria-selected={on}
+              tabIndex={on ? 0 : -1}
               onClick={() => onPin(pinned === t.key ? null : t.key)}
-              className="relative px-3.5 py-2.5 text-[0.6875rem] transition-colors"
+              className="relative flex items-center gap-1.5 px-3.5 py-2.5 text-label transition-colors hover:text-mid"
               style={{ color: on ? "var(--gold)" : "var(--text-lo)" }}
             >
               {t.label}
               {next && !on && (
-                <span className="ml-1.5 text-[0.5rem] text-ok">•</span>
+                <span
+                  title="Es lo que el caso está mostrando ahora"
+                  className="h-[0.3rem] w-[0.3rem] rounded-full bg-ok"
+                  style={{ animation: "pulse-dot 1.8s ease-in-out infinite" }}
+                />
               )}
               {on && (
                 <motion.span
                   layoutId="scene-underline"
-                  className="absolute right-2 bottom-0 left-2 h-[0.125rem] rounded-full bg-gold"
+                  transition={{ duration: 0.35, ease }}
+                  className="absolute right-2 bottom-0 left-2 h-[0.14rem] rounded-full bg-gold"
                 />
               )}
             </button>
           );
         })}
-        {pinned && (
-          <button
-            onClick={() => onPin(null)}
-            className="ml-auto mr-2 rounded border border-line px-2.5 py-1 text-[0.5625rem] text-lo transition-colors hover:text-mid"
-          >
-            Seguir el caso automáticamente
-          </button>
-        )}
+        <AnimatePresence>
+          {pinned && (
+            <motion.button
+              initial={{ opacity: 0, x: 8 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 8 }}
+              onClick={() => onPin(null)}
+              className="mr-2 ml-auto rounded-md border border-line px-2.5 py-1 text-micro text-lo transition-colors hover:border-line-strong hover:bg-card-hover hover:text-mid"
+            >
+              Seguir el caso automáticamente
+            </motion.button>
+          )}
+        </AnimatePresence>
       </div>
 
       <div className="relative min-h-0 flex-1">
-      <AnimatePresence mode="wait">
-        {scene === "body" && (
-          <motion.div key="body" {...fade} className="absolute inset-0">
-            <BodyScene vitals={vitals} assess={assess} history={history} />
-          </motion.div>
-        )}
+        <AnimatePresence mode="wait">
+          {scene === "body" && (
+            <motion.div key="body" {...fade} className="absolute inset-0">
+              <BodyScene vitals={vitals} assess={assess} history={history} />
+            </motion.div>
+          )}
 
-        {scene === "agents" && (
-          <motion.div key="agents" {...fade} className="absolute inset-0">
-            <AgentsScene agents={agents} />
-          </motion.div>
-        )}
+          {scene === "agents" && (
+            <motion.div key="agents" {...fade} className="absolute inset-0">
+              <AgentsScene agents={agents} />
+            </motion.div>
+          )}
 
-        {scene === "decide" && (
-          <motion.div key="decide" {...fade} className="absolute inset-0">
-            <DecideScene
-              history={history}
-              branches={branches}
-              projection={projection}
-            />
-          </motion.div>
-        )}
+          {scene === "decide" && (
+            <motion.div key="decide" {...fade} className="absolute inset-0">
+              <DecideScene
+                history={history}
+                branches={branches}
+                projection={projection}
+              />
+            </motion.div>
+          )}
 
-        {scene === "result" && (
-          <motion.div key="result" {...fade} className="absolute inset-0">
-            <ResultScene
-              history={history}
-              vitals={vitals}
-              branches={branches}
-              applied={applied}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
+          {scene === "result" && (
+            <motion.div key="result" {...fade} className="absolute inset-0">
+              <ResultScene
+                history={history}
+                vitals={vitals}
+                branches={branches}
+                applied={applied}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
 }
 
-const SCENE: Record<Phase, "body" | "agents" | "decide" | "result"> = {
+const SCENE: Record<Phase, SceneKey> = {
   0: "body",
   1: "body",
   2: "agents",
@@ -181,6 +216,7 @@ function BodyScene({
           style={{
             background:
               "radial-gradient(ellipse 45% 65% at 20% 50%, rgba(30,90,140,0.2) 0%, transparent 70%)",
+            animation: "breathe 5s ease-in-out infinite",
           }}
         />
         <div className="relative h-full w-[26%] shrink-0">
@@ -211,27 +247,37 @@ function AgentsScene({ agents }: { agents: AgentOutput[] }) {
       />
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 p-4">
         {agents.map((a, i) => (
-          <motion.div
+          <motion.article
             key={a.id}
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             // entran en cascada: se ve que van llegando, no que ya estaban
-            transition={{ delay: i * 0.18, duration: 0.5, ease }}
-            className="flex min-h-0 flex-col rounded-[0.6rem] border p-4"
+            transition={{ delay: i * 0.16, duration: 0.5, ease }}
+            className="relative flex min-h-0 flex-col overflow-hidden rounded-[0.6rem] border p-4"
             style={{
               borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
               background: `color-mix(in srgb, ${a.color} 5%, transparent)`,
             }}
           >
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className="text-[0.8125rem] font-medium"
-                style={{ color: a.color }}
-              >
-                {a.name}
+            {/* mientras el agente "piensa", una luz recorre su borde superior */}
+            {a.state !== "En espera" && (
+              <span className="pointer-events-none absolute inset-x-0 top-0 h-px overflow-hidden">
+                <span
+                  className="block h-full w-1/3"
+                  style={{
+                    background: `linear-gradient(90deg, transparent, ${a.color}, transparent)`,
+                    animation: `sweep 2.8s ${i * 0.4}s ease-in-out infinite`,
+                  }}
+                />
               </span>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-body font-medium" style={{ color: a.color }}>
+                {a.name}
+              </h3>
               <span
-                className="shrink-0 rounded border px-2 py-[0.1rem] text-[0.5625rem]"
+                className="shrink-0 rounded border px-2 py-[0.1rem] text-micro"
                 style={{
                   borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
                   color: a.color,
@@ -240,28 +286,38 @@ function AgentsScene({ agents }: { agents: AgentOutput[] }) {
                 {a.state}
               </span>
             </div>
-            <div className="mt-1 text-[0.625rem] text-lo">{a.role}</div>
+            <div className="mt-1 text-micro text-lo">{a.role}</div>
 
-            <p className="mt-4 text-[0.9375rem] leading-[1.6] text-hi">
-              {a.headline}
-            </p>
-            {a.technical && (
-              <p className="mt-3 text-[0.6875rem] leading-[1.6] text-dim">
-                {a.technical}
+            {/* min-h-0 + overflow: sin esto, un titular largo empujaba la
+                evidencia fuera de la tarjeta y quedaba cortada a media línea */}
+            {/* line-clamp, no overflow-hidden: recortar por píxeles deja una
+                línea partida por la mitad y parece un fallo de render. */}
+            <div className="min-h-0 flex-1 overflow-hidden">
+              <p className="mt-3.5 line-clamp-5 text-lead leading-[1.5] text-hi">
+                {a.headline}
               </p>
-            )}
+              {a.technical && (
+                <p className="mt-2.5 line-clamp-3 text-label leading-[1.55] text-lo">
+                  {a.technical}
+                </p>
+              )}
+            </div>
 
-            <div className="mt-auto flex flex-wrap gap-1.5 pt-4">
-              {a.evidence.slice(0, 4).map((e) => (
-                <span
+            <div className="flex shrink-0 flex-wrap gap-1.5 pt-3">
+              {a.evidence.slice(0, 3).map((e, k) => (
+                <motion.span
                   key={e.label}
-                  className="rounded border border-line px-2 py-[0.15rem] text-[0.625rem] text-lo"
+                  initial={{ opacity: 0, scale: 0.94 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: i * 0.16 + 0.3 + k * 0.06, duration: 0.3 }}
+                  className="rounded border border-line px-2 py-[0.15rem] text-micro text-lo"
                 >
-                  {e.label} <span className="font-mono text-mid">{e.value}</span>
-                </span>
+                  {e.label}{" "}
+                  <span className="num font-mono text-mid">{e.value}</span>
+                </motion.span>
               ))}
             </div>
-          </motion.div>
+          </motion.article>
         ))}
       </div>
     </div>
@@ -295,73 +351,88 @@ function DecideScene({
         accent={projection?.color}
       />
 
-      <div className="flex shrink-0 items-center gap-4 px-4 pb-1">
-        {SERIES.filter((s) => s.key === "map" || s.key === "lactate").map(
-          (s) => (
+      <div className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-1 px-4 pt-2">
+        {SERIES.map((s) => (
+          <span
+            key={s.key}
+            className="flex items-center gap-1.5 text-micro text-mid"
+          >
             <span
-              key={s.key}
-              className="flex items-center gap-1.5 text-[0.625rem] text-mid"
-            >
-              <span
-                className="h-[0.35rem] w-[0.35rem] rounded-full"
-                style={{ background: s.color }}
-              />
-              {s.key === "map" ? "Presión de bombeo" : "Falta de oxígeno"}
-            </span>
-          ),
-        )}
-        <span className="flex items-center gap-1.5 text-[0.625rem] text-dim">
+              className="h-[0.16rem] w-[0.9rem] rounded-full"
+              style={{ background: s.color }}
+            />
+            {s.human}
+          </span>
+        ))}
+        <span className="flex items-center gap-1.5 text-micro text-dim">
           <span className="inline-block h-0 w-5 border-t border-dashed border-[var(--text-lo)]" />
-          proyectado
+          proyectado — no medido
         </span>
       </div>
 
-      <div className="min-h-0 flex-1 px-2">
+      <div className="min-h-0 flex-1 px-2 pb-2">
         <TrendChart history={history} projection={projection} />
       </div>
 
-      {/* la comparación en una línea: es el argumento del producto */}
-      <div className="grid shrink-0 grid-cols-4 gap-2 px-4 pb-3">
-        {branches.map((b) => (
-          <div
-            key={b.key}
-            className="rounded-md border px-3 py-2 transition-colors"
+      {/* El resumen de las cuatro ramas vive en la barra de abajo, no aquí:
+          estaba duplicado y era el mismo dato dos veces en la misma pantalla.
+          Lo que sí falta arriba es la lectura de la rama en foco. */}
+      <AnimatePresence>
+        {projection && projection.key !== "none" && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            transition={{ duration: 0.28, ease }}
+            className="mx-4 mb-3 flex shrink-0 items-center gap-5 rounded-lg border px-4 py-2.5"
             style={{
-              borderColor:
-                projection?.key === b.key
-                  ? b.color
-                  : "var(--line)",
-              background:
-                projection?.key === b.key
-                  ? `color-mix(in srgb, ${b.color} 10%, transparent)`
-                  : "transparent",
+              borderColor: `color-mix(in srgb, ${projection.color} 32%, transparent)`,
+              background: `color-mix(in srgb, ${projection.color} 7%, transparent)`,
             }}
           >
-            <div className="text-[0.6875rem]" style={{ color: b.color }}>
-              {b.human}
-            </div>
-            <div className="mt-1 flex gap-3 font-mono text-[0.625rem] text-mid">
-              <span>
-                presión{" "}
-                <span className="text-hi">
-                  {b.key === "none"
-                    ? "—"
-                    : `${b.vsNone.map >= 0 ? "+" : ""}${b.vsNone.map.toFixed(0)}`}
-                </span>
+            <span className="text-micro tracking-[0.14em] text-dim">
+              FRENTE A NO HACER NADA
+            </span>
+            <Swing label="Presión de bombeo" value={projection.vsNone.map} digits={1} unit=" mmHg" />
+            <Swing label="Sangre bombeada" value={projection.vsNone.co} digits={2} unit=" L/min" />
+            <Swing
+              label="Falta de oxígeno"
+              value={-projection.vsNone.lactate}
+              digits={2}
+              unit=" mmol/L menos"
+            />
+            {branches.length > 0 && (
+              <span className="ml-auto text-micro text-lo">
+                horizonte {Math.round(projection.points.length / 60)} min
               </span>
-              <span>
-                oxígeno{" "}
-                <span className="text-hi">
-                  {b.key === "none"
-                    ? "—"
-                    : `${-b.vsNone.lactate >= 0 ? "+" : ""}${(-b.vsNone.lactate).toFixed(1)}`}
-                </span>
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function Swing({
+  label,
+  value,
+  digits,
+  unit = "",
+}: {
+  label: string;
+  value: number;
+  digits: number;
+  unit?: string;
+}) {
+  const flat = Math.abs(value) < 10 ** -digits * 5;
+  const color = flat ? "var(--text-lo)" : value > 0 ? "var(--ok)" : "var(--crit)";
+  return (
+    <span className="flex flex-col">
+      <span className="text-micro text-lo">{label}</span>
+      <span className="num font-mono text-num-sm leading-tight" style={{ color }}>
+        {flat ? "sin cambio" : `${value > 0 ? "+" : ""}${value.toFixed(digits)}${unit}`}
+      </span>
+    </span>
   );
 }
 
@@ -392,19 +463,21 @@ function ResultScene({
         }
         accent={chosen?.color}
       />
-      <div className="min-h-0 flex-1 px-2">
+      <div className="min-h-0 flex-1 px-2 pt-2">
         <TrendChart history={history} projection={none ?? null} />
       </div>
-      <div className="grid shrink-0 grid-cols-3 gap-3 px-4 pb-3">
-        <Metric label="Pulso" value={`${Math.round(vitals.hr)}`} unit="lpm" />
+      <div className="grid shrink-0 grid-cols-3 gap-3 px-4 py-3">
+        <Metric label="Pulso" value={vitals.hr} digits={0} unit="lpm" />
         <Metric
           label="Presión de bombeo"
-          value={`${Math.round(vitals.map)}`}
+          value={vitals.map}
+          digits={0}
           unit="mmHg"
         />
         <Metric
           label="Falta de oxígeno"
-          value={vitals.lactate.toFixed(1)}
+          value={vitals.lactate}
+          digits={1}
           unit="mmol/L"
         />
       </div>
@@ -415,18 +488,20 @@ function ResultScene({
 function Metric({
   label,
   value,
+  digits,
   unit,
 }: {
   label: string;
-  value: string;
+  value: number;
+  digits: number;
   unit: string;
 }) {
   return (
-    <div className="rounded-md border border-line px-3 py-2">
-      <div className="text-[0.625rem] text-lo">{label}</div>
-      <div className="mt-1 font-mono text-[1.3rem] leading-none text-hi tabular-nums">
-        {value}
-        <span className="ml-1 text-[0.625rem] text-dim">{unit}</span>
+    <div className="rounded-md border border-line bg-panel px-3 py-2">
+      <div className="text-micro text-lo">{label}</div>
+      <div className="num mt-1 font-mono text-num-sm leading-none text-hi">
+        {value.toFixed(digits)}
+        <span className="ml-1 text-micro text-dim">{unit}</span>
       </div>
     </div>
   );
@@ -445,15 +520,25 @@ function SceneTitle({
 }) {
   return (
     <div className="flex shrink-0 items-baseline gap-3 border-b border-line px-4 py-2.5">
-      <span
-        className="text-[0.75rem] tracking-[0.14em]"
+      <motion.h2
+        key={title}
+        initial={{ opacity: 0, x: -6 }}
+        animate={{ opacity: 1, x: 0 }}
+        transition={{ duration: 0.3, ease }}
+        className="shrink-0 text-label tracking-[0.14em]"
         style={{ color: accent ?? "var(--text-mid)" }}
       >
         {title}
-      </span>
-      <span className="min-w-0 flex-1 truncate text-[0.6875rem] text-lo">
+      </motion.h2>
+      <motion.p
+        key={hint}
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.35, delay: 0.05 }}
+        className="min-w-0 flex-1 truncate text-micro text-lo"
+      >
         {hint}
-      </span>
+      </motion.p>
     </div>
   );
 }

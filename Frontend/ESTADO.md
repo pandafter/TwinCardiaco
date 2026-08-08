@@ -91,6 +91,23 @@ no toca componentes.
 Los coeficientes de las intervenciones salen de `_inotrope`, `_vasopressor` y
 `_fluid` del backend.
 
+### El sistema de diseño
+
+`globals.css` define la escala tipográfica completa como tokens
+(`--fs-micro` … `--fs-num-lg`) y Tailwind los expone como `text-micro`,
+`text-label`, `text-body`, `text-lead`, `text-num`.
+
+**`--fs-micro` (0.6rem) es el piso. Nada baja de ahí.** La barra de decisión
+llegó a usar `text-[0.4375rem]` — unos 8px en un portátil — y ese era el
+motivo real de que "no se entendieran los botones": no estaban mal
+redactados, estaban ilegibles. No vuelvas a meter tamaños arbitrarios en
+`text-[...]`.
+
+El color es información: rojo/ámbar/verde solo dicen estado del paciente,
+azul y violeta solo identifican series del gráfico, y el dorado es lo
+accionable. Lo que no significa nada va en gris. Se eliminó el cian como
+color de acción (era un sexto acento compitiendo).
+
 ### Reglas duras del proyecto
 
 1. **Lo simulado nunca se ve como lo medido.** Toda proyección va punteada,
@@ -186,6 +203,17 @@ rutas, y una captura mirada de verdad.
 - **La intervención no se puede pasar al constructor del motor** para
   proyectar: su bucle termina en `decisionAt - dt` y la condición `t >= at`
   nunca se cumple. Se aplica dentro del bucle de proyección.
+- **Nada que se abra puede empujar el layout.** La respuesta a una pregunta
+  crecía dentro del flujo y la columna de vitales perdía dos filas justo
+  cuando el usuario acababa de preguntar. Ahora flota anclada sobre la barra
+  (`absolute bottom-full`) con fondo opaco.
+- **`overflow-hidden` corta a media línea y parece un fallo de render.** Para
+  texto usa `line-clamp-N`; `overflow-hidden` solo como red de seguridad del
+  contenedor.
+- **Márgenes mágicos contra un grid `items-start`.** La home usaba
+  `mt-[3.4rem]` / `mb-[3.25rem]` para alinear columnas a ojo: el corazón hero
+  se salía de su tarjeta y tapaba el título, y el pie se solapaba con el rail.
+  Se sustituyeron por un grid de dos columnas con `min-h-0` en toda la cadena.
 
 ---
 
@@ -195,9 +223,15 @@ Del lado del **frontend**:
 
 1. Verificar el SSE contra el backend corriendo de verdad. Está escrito y
    degrada bien sin él, pero nunca se ha probado con datos reales.
-2. `/compare` y `/response` siguen con el lenguaje y los agentes viejos; el
-   monitor ya cubre su función con las escenas "Las opciones" y "El
-   resultado". O se alinean o se eliminan.
+2. **`/compare` y `/response` ya no están enlazadas desde ninguna parte**
+   (se borró `shell/Shell.tsx`, que era el único sitio con ese nav y además
+   no lo importaba nadie). Siguen accesibles por URL y siguen mostrando datos
+   inventados: "PORTAL CONECTADO", "4 agentes", "2 usuarios conectados" y
+   timestamps fijos `13:58:00`. **No las enseñes en la demo.** O se alinean al
+   monitor o se borran.
+3. El motor solo simula el caso recomendado. La home ya lo dice en pantalla
+   (chip `SIMULABLE` frente a `solo ficha`, y un aviso en el pie), pero si
+   alguien quiere los otros tres casos hay que parametrizar `Engine`.
 
 Del lado del **backend** (pedido al equipo, en orden):
 

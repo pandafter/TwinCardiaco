@@ -1,25 +1,22 @@
 "use client";
 
 import { useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import {
   CASES,
-  CAPABILITIES,
   DATA_SOURCES,
   SEVERITY_TONE,
-  WIZARD_STEPS,
   type ClinicalCase,
 } from "@/lib/cases";
 import { HeartVisual } from "./HeartVisual";
 import {
   ArrowRight,
-  Bulb,
-  CheckSquare,
+  CheckCircle,
   Droplet,
   Female,
   Flask,
   Gauge,
   HeartRate,
-  Info,
   LogoMark,
   Lungs,
   Male,
@@ -27,11 +24,29 @@ import {
   Person,
   Pressure,
   Shield,
-  Target,
-  Users,
   Waves,
-  CheckCircle,
 } from "./icons";
+
+/**
+ * Pantalla de entrada.
+ *
+ * Reescrita por tres motivos, y ninguno era estético:
+ *
+ *  - El stepper "01 → 04" prometía cuatro pasos que no existen: solo hay uno.
+ *    Un jurado que hace clic esperando "Configurar escenario" encuentra el
+ *    monitor. Fuera.
+ *  - "3 conectados" y el botón Invitar mostraban una presencia que el sistema
+ *    no tiene. Fuera.
+ *  - El layout usaba márgenes mágicos (`mt-[3.4rem]`, `mb-[3.25rem]`) contra
+ *    un grid `items-start`: el corazón hero se salía de su tarjeta y tapaba el
+ *    título, y el pie se solapaba con la última tarjeta del rail.
+ *
+ * Y una cosa que sí es de honestidad: el motor solo simula el caso
+ * recomendado. Los otros tres se pueden leer, pero se dice en pantalla que no
+ * corren, en vez de dejar que alguien lo descubra en la demo.
+ */
+
+const ease = [0.22, 1, 0.36, 1] as const;
 
 const TONE: Record<string, string> = {
   hi: "text-hi",
@@ -57,29 +72,39 @@ const VITAL_ICON_TONE: Record<string, string> = {
   hr: "text-mid",
   bp: "text-crit",
   map: "text-ok",
-  spo2: "text-[#5aa9e6]",
+  spo2: "text-info",
   rr: "text-warn",
-  lactate: "text-[#a97bd6]",
-  co: "text-[#5aa9e6]",
+  lactate: "text-violet",
+  co: "text-info",
   perf: "text-ok",
   hemo: "text-ok",
   rhythm: "text-mid",
 };
 
+/** Lo que el simulador hace de verdad hoy. Ni más ni menos. */
+const CAPABILITIES = [
+  "Ver la cadena causal del deterioro en vivo",
+  "Escuchar a tres agentes que no coinciden",
+  "Proyectar cuatro decisiones antes de tomarlas",
+  "Preguntar cualquier escenario en español",
+];
+
 export function SelectPatientScreen() {
   const [selectedId, setSelectedId] = useState(CASES[0].id);
   const active = CASES.find((c) => c.id === selectedId) ?? CASES[0];
+  const runnable = CASES.find((c) => c.recommended) ?? CASES[0];
 
   return (
     <div className="h-full w-full bg-page p-2.5">
       <div className="flex h-full w-full flex-col overflow-hidden rounded-[0.875rem] border border-line bg-shell">
         <TopBar />
-        <div className="grid min-h-0 flex-1 grid-cols-[14.25rem_22.25rem_1fr] items-start gap-5 px-5 pt-4">
-          <LeftRail />
-          <CenterColumn selectedId={selectedId} onSelect={setSelectedId} />
+
+        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,25rem)_minmax(0,1fr)] gap-5 overflow-hidden px-5 pt-4 pb-3">
+          <CaseList selectedId={selectedId} onSelect={setSelectedId} />
           <CaseDetail c={active} />
         </div>
-        <Footer />
+
+        <Footer runnable={runnable} selected={active} />
       </div>
     </div>
   );
@@ -89,173 +114,47 @@ export function SelectPatientScreen() {
 
 function TopBar() {
   return (
-    <header
-      data-shot="topbar"
-      className="flex shrink-0 items-center justify-between border-b border-line px-5 py-3.5"
-    >
+    <header className="flex shrink-0 items-center justify-between border-b border-line px-5 py-3">
       <div className="flex items-center gap-2.5">
-        <LogoMark className="h-[1.8rem] w-[1.8rem] text-gold" />
+        <LogoMark className="h-[1.7rem] w-[1.7rem] text-crit" />
         <div className="leading-none">
           <div className="flex items-baseline gap-1.5">
-            <span className="text-[1.3rem] font-semibold tracking-[0.1em] text-hi">
+            <span className="text-title font-semibold tracking-[0.1em] text-hi">
               CARDIAC
             </span>
-            <span className="text-[1.3rem] font-light tracking-[0.1em] text-mid">
+            <span className="text-title font-light tracking-[0.1em] text-mid">
               TWIN
             </span>
           </div>
-          <div className="mt-1.5 text-[0.5rem] tracking-[0.22em] text-dim">
-            REAL-TIME CARDIAC DIGITAL TWIN
+          <div className="mt-1.5 text-micro tracking-[0.2em] text-dim">
+            SIMULADOR DE DECISIONES CLÍNICAS
           </div>
         </div>
       </div>
 
-      <nav className="flex items-start">
-        {WIZARD_STEPS.map((s, i) => {
-          const isActive = i === 0;
-          return (
-            <div key={s.n} className="flex items-start">
-              {/* el label va fuera del flujo: si expande la columna, las
-                  líneas conectoras se acortan y el stepper se desalinea */}
-              <div className="relative w-[2rem]">
-                <div
-                  className={[
-                    "flex h-[2rem] w-[2rem] items-center justify-center rounded-full border text-[0.6875rem] font-medium tabular-nums",
-                    isActive
-                      ? "border-gold text-gold shadow-[0_0_0_0.25rem_rgba(200,155,72,0.07)]"
-                      : "border-line-strong text-lo",
-                  ].join(" ")}
-                >
-                  {s.n}
-                </div>
-                <div
-                  className={[
-                    "absolute top-full left-1/2 mt-2 -translate-x-1/2 text-[0.625rem] whitespace-nowrap",
-                    isActive ? "text-hi" : "text-lo",
-                  ].join(" ")}
-                >
-                  {s.title}
-                </div>
-              </div>
-              {i < WIZARD_STEPS.length - 1 && (
-                <div className="mx-[1.125rem] mt-[1rem] h-px w-[5.75rem] shrink-0 bg-line-strong" />
-              )}
-            </div>
-          );
-        })}
-      </nav>
+      <p className="max-w-[34rem] text-label leading-[1.6] text-mid">
+        Un paciente virtual se deteriora solo. Tres agentes lo analizan y
+        discrepan.{" "}
+        <span className="text-hi">
+          Tú ves a dónde lleva cada decisión antes de tomarla.
+        </span>
+      </p>
 
-      <div className="flex items-center gap-2.5">
-        <div className="flex items-center gap-2.5 rounded-lg border border-line-strong px-3 py-2">
-          <Users className="h-[1.05rem] w-[1.05rem] text-lo" />
-          <div className="leading-tight">
-            <div className="text-[0.6875rem] text-hi">Colaboración</div>
-            <div className="mt-0.5 text-[0.625rem] text-ok">3 conectados</div>
-          </div>
-        </div>
+      <div className="flex items-center gap-2 rounded-lg border border-line px-3 py-1.5">
+        <Shield className="h-[0.9rem] w-[0.9rem] text-gold-dim" />
+        <span className="text-micro leading-[1.5] text-lo">
+          Datos sintéticos
+          <br />
+          Sin validación clínica
+        </span>
       </div>
     </header>
   );
 }
 
-/* -------------------------------------------------------------- left rail */
+/* --------------------------------------------------------------- los casos */
 
-function LeftRail() {
-  return (
-    <aside data-shot="rail" className="flex h-full min-h-0 flex-col gap-3.5">
-      <div className="mb-[3.25rem]">
-        <div className="mb-2.5 text-[0.5625rem] tracking-[0.2em] text-lo">
-          PASOS
-        </div>
-        <div className="overflow-hidden rounded-[0.625rem] border border-line">
-          {WIZARD_STEPS.map((s, i) => {
-            const isActive = i === 0;
-            return (
-              <div
-                key={s.n}
-                className={[
-                  "relative flex items-start gap-2.5 px-3 py-2",
-                  i > 0 ? "border-t border-line" : "",
-                  isActive ? "bg-[#0f1319]" : "",
-                ].join(" ")}
-              >
-                {isActive && (
-                  <span className="absolute top-0 bottom-0 left-0 w-[0.125rem] bg-gold" />
-                )}
-                <div
-                  className={[
-                    "mt-px flex h-[1.35rem] w-[1.35rem] shrink-0 items-center justify-center rounded-full border text-[0.5625rem] tabular-nums",
-                    isActive
-                      ? "border-gold text-gold"
-                      : "border-line-strong text-lo",
-                  ].join(" ")}
-                >
-                  {i + 1}
-                </div>
-                <div className="leading-tight">
-                  <div
-                    className={[
-                      "text-[0.6875rem]",
-                      isActive ? "text-hi" : "text-mid",
-                    ].join(" ")}
-                  >
-                    {s.title}
-                  </div>
-                  <div className="mt-1 text-[0.5625rem] leading-snug text-dim">
-                    {s.hint}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <Panel className="p-3.5">
-        <div className="flex items-center gap-2">
-          <Bulb className="h-[0.9rem] w-[0.9rem] text-gold" />
-          <span className="text-[0.6875rem] text-hi">¿Qué es Cardiac Twin?</span>
-        </div>
-        <p className="mt-2.5 text-[0.625rem] leading-[1.65] text-mid">
-          Un gemelo digital del corazón que evoluciona en tiempo real. Observa,
-          analiza y prueba decisiones antes de aplicarlas en la vida real.
-        </p>
-      </Panel>
-
-      <Panel className="p-3.5">
-        <div className="text-[0.6875rem] text-hi">Fuentes de datos</div>
-        <ul className="mt-3 space-y-2.5">
-          {DATA_SOURCES.map((d) => (
-            <li key={d.tag} className="flex items-center justify-between gap-1.5">
-              <span className="flex min-w-0 items-center gap-1.5 text-[0.5rem] text-mid">
-                <span className="h-[0.14rem] w-[0.14rem] shrink-0 rounded-full bg-lo" />
-                <span className="truncate">{d.name}</span>
-              </span>
-              <span className="shrink-0 rounded-[0.1875rem] border border-line-strong bg-[#0e1319] px-1 py-[0.08rem] text-[0.4375rem] tracking-[0.08em] text-lo">
-                {d.tag}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </Panel>
-
-      <Panel className="mt-auto mb-4 flex items-start gap-2.5 p-3.5">
-        <Shield className="mt-px h-[0.95rem] w-[0.95rem] shrink-0 text-gold-dim" />
-        <div>
-          <div className="text-[0.625rem] text-mid">Privacidad y seguridad</div>
-          <p className="mt-1 text-[0.5rem] leading-[1.6] text-dim">
-            Todos los datos son de-identificados y usados solo con fines
-            educativos.
-          </p>
-        </div>
-      </Panel>
-    </aside>
-  );
-}
-
-/* ----------------------------------------------------------- center column */
-
-function CenterColumn({
+function CaseList({
   selectedId,
   onSelect,
 }: {
@@ -263,35 +162,52 @@ function CenterColumn({
   onSelect: (id: string) => void;
 }) {
   return (
-    <section data-shot="center" className="flex flex-col">
-      <h1 className="text-[0.9375rem] font-medium tracking-[0.09em] text-hi">
+    <section className="flex min-h-0 flex-col">
+      <h1 className="shrink-0 text-lead font-medium tracking-[0.06em] text-hi">
         SELECCIONA UN PACIENTE
       </h1>
-      <p className="mt-1.5 text-[0.625rem] text-mid">
+      <p className="mt-1 shrink-0 text-label text-mid">
         Elige el caso clínico que quieres simular.
       </p>
 
-      <div className="mt-3 flex flex-col gap-2.5">
-        {CASES.map((c) => (
+      <div className="mt-3 flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto pr-1">
+        {CASES.map((c, i) => (
           <CaseCard
             key={c.id}
             c={c}
+            index={i}
             selected={c.id === selectedId}
             onSelect={() => onSelect(c.id)}
           />
         ))}
       </div>
 
+      <ul className="mt-3 flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-micro tracking-[0.14em] text-dim">
+          FUENTES DE DATOS
+        </span>
+        {DATA_SOURCES.map((d) => (
+          <li
+            key={d.tag}
+            className="flex items-center gap-1.5 text-micro text-lo"
+          >
+            <span className="h-[0.16rem] w-[0.16rem] rounded-full bg-lo" />
+            {d.name}
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }
 
 function CaseCard({
   c,
+  index,
   selected,
   onSelect,
 }: {
   c: ClinicalCase;
+  index: number;
   selected: boolean;
   onSelect: () => void;
 }) {
@@ -299,54 +215,84 @@ function CaseCard({
   const SexIcon = c.sex === "M" ? Male : Female;
 
   return (
-    <button
+    <motion.button
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.07, duration: 0.45, ease }}
+      whileHover={{ y: -2 }}
+      whileTap={{ scale: 0.995 }}
       onClick={onSelect}
+      aria-pressed={selected}
       className={[
-        "flex w-full items-start gap-3 rounded-[0.625rem] border p-3 text-left transition-colors",
+        "relative flex w-full shrink-0 items-start gap-3 overflow-hidden rounded-[0.7rem] border p-3 text-left transition-colors",
         selected
-          ? "border-[#b08a3c] bg-card-hi shadow-[0_0_0_1px_rgba(200,155,72,0.12),0_0_2rem_-0.5rem_rgba(200,155,72,0.25)]"
-          : "border-line bg-card hover:border-line-strong hover:bg-[#0e1319]",
+          ? "border-line-gold bg-card-hi"
+          : "border-line bg-card hover:border-line-strong hover:bg-card-hover",
       ].join(" ")}
     >
-      <div className="relative h-[5.5rem] w-[5.5rem] shrink-0 overflow-hidden rounded-lg border border-line bg-[#0a0d12]">
+      {/* la barra de selección se desliza entre tarjetas en vez de saltar */}
+      {selected && (
+        <motion.span
+          layoutId="case-marker"
+          transition={{ duration: 0.35, ease }}
+          className="absolute inset-y-0 left-0 w-[0.16rem] bg-gold"
+        />
+      )}
+
+      <div className="relative h-[4.6rem] w-[4.6rem] shrink-0 overflow-hidden rounded-lg border border-line bg-page">
         <HeartVisual className="absolute inset-0 h-full w-full" />
       </div>
 
-      <div className="min-w-0 flex-1 py-0.5">
+      <div className="min-w-0 flex-1">
         <div className="flex items-start justify-between gap-2">
-          <h3 className="text-[0.8125rem] leading-snug font-medium text-hi">
+          <h2 className="text-body leading-snug font-medium text-hi">
             {c.title}
-          </h3>
-          {c.recommended && <RecommendedChip />}
+          </h2>
+          {c.recommended ? (
+            <Chip tone="gold">SIMULABLE</Chip>
+          ) : (
+            <Chip tone="mute">solo ficha</Chip>
+          )}
         </div>
-        <p className="mt-1.5 text-[0.625rem] leading-[1.55] text-mid">
+        <p className="mt-1 line-clamp-2 text-micro leading-[1.5] text-mid">
           {c.blurb}
         </p>
-        <div className="mt-2.5 flex items-center gap-3">
-          <Meta icon={<Person className="h-[0.7rem] w-[0.7rem]" />}>
+        <div className="mt-2 flex items-center gap-3">
+          <span className="flex items-center gap-1 text-micro text-lo">
+            <Person className="h-[0.7rem] w-[0.7rem]" />
             {c.age} años
-          </Meta>
+          </span>
           <SexIcon className="h-[0.7rem] w-[0.7rem] text-lo" />
-          <span className="flex items-center gap-1.5 text-[0.5625rem] text-lo">
+          <span className="flex items-center gap-1.5 text-micro text-lo">
             Severidad: <span style={{ color: sev.color }}>{c.severity}</span>
             <SeverityBars level={sev.bars} color={sev.color} />
           </span>
         </div>
       </div>
-    </button>
+    </motion.button>
   );
 }
 
-function Meta({
-  icon,
+function Chip({
+  tone,
   children,
 }: {
-  icon: React.ReactNode;
+  tone: "gold" | "mute";
   children: React.ReactNode;
 }) {
   return (
-    <span className="flex items-center gap-1 text-[0.5625rem] text-lo">
-      <span className="text-lo">{icon}</span>
+    <span
+      className="shrink-0 rounded border px-1.5 py-[0.1rem] text-micro tracking-[0.1em]"
+      style={
+        tone === "gold"
+          ? {
+              borderColor: "var(--line-gold)",
+              background: "var(--gold-soft)",
+              color: "var(--gold)",
+            }
+          : { borderColor: "var(--line)", color: "var(--text-dim)" }
+      }
+    >
       {children}
     </span>
   );
@@ -361,18 +307,10 @@ function SeverityBars({ level, color }: { level: number; color: string }) {
           className="w-[0.14rem] rounded-[0.03rem]"
           style={{
             height: `${0.28 + i * 0.07}rem`,
-            background: i < level ? color : "#262e38",
+            background: i < level ? color : "var(--line-strong)",
           }}
         />
       ))}
-    </span>
-  );
-}
-
-function RecommendedChip() {
-  return (
-    <span className="shrink-0 rounded-[0.1875rem] border border-[#75591f] bg-[rgba(200,155,72,0.09)] px-1.5 py-[0.1rem] text-[0.4375rem] tracking-[0.12em] text-gold">
-      RECOMENDADO
     </span>
   );
 }
@@ -384,87 +322,99 @@ function CaseDetail({ c }: { c: ClinicalCase }) {
   const sev = SEVERITY_TONE[c.severity];
 
   return (
-    <section
-      data-shot="detail"
-      className="mt-[3.4rem] flex flex-col overflow-hidden rounded-[0.625rem] border border-line bg-panel"
-    >
-      <div className="relative shrink-0 px-4 pt-4 pb-3.5">
-        <div className="pointer-events-none absolute top-0 right-3 h-[12.5rem] w-[11rem]">
+    <section className="flex min-h-0 flex-col overflow-hidden rounded-[0.7rem] border border-line bg-panel">
+      {/* El corazón vive DENTRO de su caja y se desvanece hacia el texto.
+          Antes era un absolute de altura fija que se salía por arriba. */}
+      <div className="relative shrink-0 overflow-hidden px-5 pt-4 pb-4">
+        <div
+          className="pointer-events-none absolute -top-6 right-0 h-[13rem] w-[12rem] opacity-70"
+          style={{
+            maskImage:
+              "radial-gradient(ellipse at 65% 45%, #000 35%, transparent 72%)",
+            WebkitMaskImage:
+              "radial-gradient(ellipse at 65% 45%, #000 35%, transparent 72%)",
+          }}
+        >
           <HeartVisual variant="hero" className="h-full w-full" />
         </div>
-        <div className="relative flex items-center gap-2.5">
-          <h2 className="text-[1.2rem] font-medium text-hi">{c.title}</h2>
-          {c.recommended && <RecommendedChip />}
-        </div>
 
-        <div className="relative mt-4 max-w-[24.5rem]">
-          <div className="text-[0.6875rem] text-hi">Resumen del caso</div>
-          <p className="mt-2 text-[0.625rem] leading-[1.7] text-mid">
-            {c.summary}
-          </p>
-        </div>
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={c.id}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.35, ease }}
+            className="relative"
+          >
+            <div className="flex items-center gap-2.5">
+              <h2 className="text-title font-medium text-hi">{c.title}</h2>
+              {c.recommended && <Chip tone="gold">SIMULABLE</Chip>}
+            </div>
 
-        <div className="relative mt-3.5 flex gap-2">
-          <FactChip icon={null} value={`${c.age} años`} label="Edad" />
-          <FactChip
-            icon={<SexIcon className="h-[0.8rem] w-[0.8rem] text-[#5aa9e6]" />}
-            value={c.sex === "M" ? "Masculino" : "Femenino"}
-            label="Sexo"
-          />
-          <FactChip
-            icon={<HeartRate className="h-[0.8rem] w-[0.8rem] text-crit" />}
-            value={c.background}
-            label="Antecedente"
-          />
-          <FactChip
-            icon={<SeverityBars level={sev.bars} color={sev.color} />}
-            value={c.severity}
-            label="Severidad"
-          />
-        </div>
+            <p className="mt-3 max-w-[30rem] text-label leading-[1.65] text-mid">
+              {c.summary}
+            </p>
+
+            <div className="mt-3.5 flex max-w-[38rem] gap-2">
+              <FactChip icon={null} value={`${c.age} años`} label="Edad" />
+              <FactChip
+                icon={<SexIcon className="h-[0.8rem] w-[0.8rem] text-info" />}
+                value={c.sex === "M" ? "Masculino" : "Femenino"}
+                label="Sexo"
+              />
+              <FactChip
+                icon={<HeartRate className="h-[0.8rem] w-[0.8rem] text-crit" />}
+                value={c.background}
+                label="Antecedente"
+              />
+              <FactChip
+                icon={<SeverityBars level={sev.bars} color={sev.color} />}
+                value={c.severity}
+                label="Severidad"
+              />
+            </div>
+          </motion.div>
+        </AnimatePresence>
       </div>
 
-      <div className="mx-4 mb-4 flex flex-col rounded-[0.625rem] border border-line p-3.5">
-        <div className="text-[0.6875rem] text-hi">Variables iniciales</div>
+      <div className="mx-5 mb-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-[0.7rem] border border-line">
+        <div className="flex shrink-0 items-baseline gap-3 border-b border-line px-4 py-2">
+          <h3 className="text-micro tracking-[0.14em] text-mid">
+            ESTADO INICIAL
+          </h3>
+          <span className="text-micro text-dim">
+            Estos valores evolucionan solos en cuanto empieza la simulación.
+          </span>
+        </div>
 
-        <div className="mt-3 grid grid-cols-[1fr_1fr_1.28fr] items-start gap-2">
-          <VitalBox rows={c.vitals} />
-          <VitalBox rows={c.derived} />
-          <div className="flex flex-col gap-2.5">
-            <Panel className="p-2.5">
-              <div className="flex items-center gap-1.5">
-                <Target className="h-[0.8rem] w-[0.8rem] text-gold" />
-                <span className="text-[0.625rem] text-hi">
-                  Objetivo del escenario
-                </span>
+        <div className="grid min-h-0 flex-1 grid-cols-[1fr_1fr_1.15fr] gap-3 overflow-hidden p-3.5">
+          <VitalBox caseId={c.id} rows={c.vitals} />
+          <VitalBox caseId={c.id} rows={c.derived} />
+          <div className="flex min-h-0 flex-col gap-2.5 overflow-hidden">
+            <div className="rounded-[0.6rem] border border-line-gold bg-[var(--gold-soft)] p-3">
+              <div className="text-micro tracking-[0.12em] text-gold">
+                OBJETIVO
               </div>
-              <p className="mt-2 text-[0.5625rem] leading-[1.65] text-mid">
-                {c.goal}
-              </p>
-            </Panel>
-            <Panel className="p-2.5">
-              <div className="text-[0.625rem] text-hi">Qué podrás hacer</div>
-              <ul className="mt-2 space-y-[0.35rem]">
+              <p className="mt-1.5 text-label leading-[1.5] text-hi">{c.goal}</p>
+            </div>
+            <div className="min-h-0 flex-1 overflow-hidden rounded-[0.6rem] border border-line bg-card p-3">
+              <div className="text-micro tracking-[0.12em] text-dim">
+                QUÉ PODRÁS HACER
+              </div>
+              <ul className="mt-2 space-y-1.5">
                 {CAPABILITIES.map((cap) => (
                   <li
                     key={cap}
-                    className="flex items-center gap-1.5 text-[0.5625rem] leading-tight text-mid"
+                    className="flex items-start gap-1.5 text-micro leading-[1.45] text-mid"
                   >
-                    <CheckSquare className="h-[0.7rem] w-[0.7rem] shrink-0 text-lo" />
+                    <span className="mt-[0.3rem] h-[0.2rem] w-[0.2rem] shrink-0 rounded-full bg-gold-dim" />
                     {cap}
                   </li>
                 ))}
               </ul>
-            </Panel>
+            </div>
           </div>
-        </div>
-
-        <div className="mt-2.5 flex items-center gap-2 rounded-lg border border-line px-3 py-2.5">
-          <Info className="h-[0.8rem] w-[0.8rem] shrink-0 text-lo" />
-          <span className="text-[0.5625rem] text-lo">
-            Estos valores corresponden al estado inicial. Evolucionarán en tiempo
-            real.
-          </span>
         </div>
       </div>
     </section>
@@ -481,95 +431,115 @@ function FactChip({
   label: string;
 }) {
   return (
-    <div className="flex flex-1 flex-col gap-1.5 rounded-lg border border-line bg-card px-3 py-2.5">
-      <div className="flex items-center gap-1.5">
+    <div className="flex min-w-0 flex-1 flex-col gap-1 rounded-lg border border-line bg-card px-3 py-2">
+      <div className="flex min-w-0 items-center gap-1.5">
         {icon}
-        <span className="text-[0.75rem] text-hi">{value}</span>
+        <span className="truncate text-label text-hi">{value}</span>
       </div>
-      <span className="text-[0.5rem] text-dim">{label}</span>
+      <span className="text-micro text-dim">{label}</span>
     </div>
   );
 }
 
 function VitalBox({
+  caseId,
   rows,
 }: {
+  caseId: string;
   rows: ClinicalCase["vitals"] | ClinicalCase["derived"];
 }) {
   return (
-    <Panel className="flex flex-col gap-[1.7rem] p-3.5">
-      {rows.map((r) => {
+    <div className="flex min-h-0 flex-col overflow-hidden rounded-[0.6rem] border border-line bg-card px-3.5">
+      {rows.map((r, i) => {
         const Icon = VITAL_ICON[r.key] ?? HeartRate;
         const isWord = !/\d/.test(r.value);
         return (
-          <div key={r.key} className="flex items-center justify-between gap-2">
+          <motion.div
+            key={`${caseId}-${r.key}`}
+            initial={{ opacity: 0, x: -6 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: i * 0.04, duration: 0.3, ease }}
+            // filas de altura igual con separador: el aire sobrante se lee
+            // como estructura en vez de como un layout mal calculado
+            className={`flex flex-1 items-center justify-between gap-2 ${
+              i > 0 ? "border-t border-line" : ""
+            }`}
+          >
             <span className="flex min-w-0 items-center gap-1.5">
               <Icon
                 className={`h-[0.75rem] w-[0.75rem] shrink-0 ${
                   VITAL_ICON_TONE[r.key] ?? "text-lo"
                 }`}
               />
-              <span className="truncate text-[0.5625rem] text-mid">
-                {r.label}
-              </span>
+              <span className="truncate text-micro text-mid">{r.label}</span>
             </span>
             <span className="flex shrink-0 items-baseline gap-1">
               <span
                 className={[
                   isWord
-                    ? "text-[0.5625rem]"
-                    : "font-mono text-[0.6875rem] font-semibold tabular-nums",
+                    ? "text-micro"
+                    : "num font-mono text-label font-semibold",
                   TONE[r.tone ?? "hi"],
                 ].join(" ")}
               >
                 {r.value}
               </span>
-              {r.unit && (
-                <span className="text-[0.5rem] text-dim">{r.unit}</span>
-              )}
+              {r.unit && <span className="text-micro text-dim">{r.unit}</span>}
               {"trend" in r && r.trend && (
-                <span className="text-[0.5rem] text-ok">↑</span>
+                <span className="text-micro text-warn">↑</span>
               )}
             </span>
-          </div>
+          </motion.div>
         );
       })}
-    </Panel>
+    </div>
   );
 }
 
 /* ------------------------------------------------------------------ footer */
 
-function Footer() {
+function Footer({
+  runnable,
+  selected,
+}: {
+  runnable: ClinicalCase;
+  selected: ClinicalCase;
+}) {
+  const willRun = selected.id === runnable.id;
+
   return (
-    <footer className="flex shrink-0 items-center gap-2.5 px-5 pt-3 pb-4">
-      <span className="mr-auto text-[0.5625rem] text-lo">
+    <footer className="flex shrink-0 items-center gap-3 border-t border-line px-5 py-3">
+      <span className="mr-auto text-label text-lo">
         El paciente empieza estable y se deteriora solo. Tú decides cuándo y
         cómo intervenir.
       </span>
-      <a
+
+      {/* Decir qué va a pasar es más barato que explicarlo en vivo cuando el
+          jurado elija el caso equivocado. */}
+      {!willRun && (
+        <span className="text-micro text-warn">
+          Esta versión solo simula «{runnable.title}»
+        </span>
+      )}
+
+      <motion.a
         href="/monitor"
-        className="flex items-center gap-2.5 rounded-lg border border-[#d8ae5c] bg-[#c69a45] px-6 py-2.5 text-[0.6875rem] font-medium text-[#14100a] transition-colors hover:bg-[#d3a751]"
+        whileHover={{ y: -2 }}
+        whileTap={{ scale: 0.97 }}
+        className="group relative flex items-center gap-2.5 overflow-hidden rounded-lg px-6 py-2.5 text-label font-semibold text-[#14100a]"
+        style={{ background: "var(--gold)" }}
       >
-        Iniciar simulación
-        <ArrowRight className="h-[0.85rem] w-[0.85rem]" />
-      </a>
+        <span
+          className="pointer-events-none absolute inset-y-0 w-1/3 opacity-0 transition-opacity group-hover:opacity-100"
+          style={{
+            background:
+              "linear-gradient(90deg, transparent, rgba(255,255,255,0.45), transparent)",
+            animation: "sweep 1.4s ease-in-out infinite",
+          }}
+        />
+        <span className="relative">Iniciar simulación</span>
+        <ArrowRight className="relative h-[0.85rem] w-[0.85rem] transition-transform group-hover:translate-x-0.5" />
+      </motion.a>
     </footer>
-  );
-}
-
-/* ------------------------------------------------------------------ shared */
-
-function Panel({
-  className = "",
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={`rounded-[0.625rem] border border-line bg-card ${className}`}>
-      {children}
-    </div>
   );
 }

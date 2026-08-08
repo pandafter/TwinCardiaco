@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { usePatientState } from "@/hooks/usePatientState";
 import {
@@ -23,6 +23,7 @@ import {
   LogoMark,
   Pressure,
 } from "@/components/icons";
+import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { DecisionBar } from "./DecisionBar";
 import { FlowGuide, phaseOf } from "./FlowGuide";
 import { EcgStrip } from "./EcgStrip";
@@ -30,22 +31,24 @@ import { Sparkline } from "./Sparkline";
 import { Stage, type SceneKey } from "./Stage";
 
 const TONE: Record<Level, string> = {
-  ok: "text-ok",
-  warn: "text-warn",
-  crit: "text-crit",
+  ok: "var(--text-hi)",
+  warn: "var(--warn)",
+  crit: "var(--crit)",
 };
 
 /**
  * Cinco vitales, no siete. Temperatura y respiraciones no deciden nada en
  * este caso y solo llenaban la columna. Cada uno lleva su nombre en
  * lenguaje normal; el término clínico va al lado, pequeño.
+ *
+ * `band` es el rango normal: sin él el sparkline es decoración.
  */
 const VITALS = [
-  { key: "hr", label: "Pulso", tech: "FC", unit: "lpm", icon: HeartRate, color: "var(--crit)", digits: 0 },
-  { key: "bp", label: "Presión arterial", tech: "sist/diast", unit: "mmHg", icon: Pressure, color: "var(--crit)", digits: 0 },
-  { key: "map", label: "Presión de bombeo", tech: "MAP", unit: "mmHg", icon: Gauge, color: "var(--warn)", digits: 0 },
-  { key: "spo2", label: "Oxígeno en sangre", tech: "SpO₂", unit: "%", icon: Droplet, color: "var(--info)", digits: 0 },
-  { key: "lactate", label: "Falta de oxígeno", tech: "lactato", unit: "mmol/L", icon: Flask, color: "var(--violet)", digits: 1 },
+  { key: "hr", label: "Pulso", tech: "FC", unit: "lpm", icon: HeartRate, color: "var(--crit)", digits: 0, band: { lo: 60, hi: 100 } },
+  { key: "bp", label: "Presión arterial", tech: "sist/diast", unit: "mmHg", icon: Pressure, color: "var(--crit)", digits: 0, band: { lo: 100, hi: 140 } },
+  { key: "map", label: "Presión de bombeo", tech: "MAP", unit: "mmHg", icon: Gauge, color: "var(--warn)", digits: 0, band: { lo: 70, hi: 100 } },
+  { key: "spo2", label: "Oxígeno en sangre", tech: "SpO₂", unit: "%", icon: Droplet, color: "var(--info)", digits: 0, band: { lo: 95, hi: 100 } },
+  { key: "lactate", label: "Falta de oxígeno", tech: "lactato", unit: "mmol/L", icon: Flask, color: "var(--violet)", digits: 1, band: { lo: 0, hi: 2 } },
 ] as const;
 
 export function MonitorScreen({
@@ -93,8 +96,8 @@ export function MonitorScreen({
       />
       <FlowGuide phase={phase} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[19rem_minmax(0,1fr)] gap-3 px-3 py-3">
-        <SideColumn vitals={vitals} history={history} />
+      <div className="grid min-h-0 flex-1 grid-cols-[19.5rem_minmax(0,1fr)] gap-3 px-3 py-3">
+        <SideColumn vitals={vitals} assess={assess} history={history} />
         <Stage
           phase={phase}
           vitals={vitals}
@@ -124,8 +127,11 @@ export function MonitorScreen({
 /* ------------------------------------------------------------------ topbar */
 
 /**
- * Una sola barra. Antes eran tres franjas apiladas que se comían el 15% del
- * alto sin decir gran cosa.
+ * Una sola barra, y el borde inferior ES la barra de riesgo.
+ *
+ * El riesgo de deterioro tenía su propio bloque con etiqueta, barra y
+ * porcentaje: tres elementos para un número que solo necesita responder
+ * "¿cuánto?". Como línea de ancho completo se lee de reojo y no ocupa nada.
  */
 function TopBar({
   assess,
@@ -141,18 +147,18 @@ function TopBar({
   const urgent = ttc !== null && ttc < 120;
 
   return (
-    <header className="flex shrink-0 items-center gap-4 border-b border-line px-4 py-2.5">
+    <header className="relative flex shrink-0 items-center gap-4 border-b border-line px-4 py-2.5">
       <Link
         href="/"
-        className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
+        className="flex items-center gap-2.5 rounded-lg transition-opacity hover:opacity-80"
       >
         <LogoMark className="h-[1.5rem] w-[1.5rem] text-crit" />
-        <span className="text-[0.9375rem] font-semibold tracking-[0.05em] text-hi">
+        <span className="text-label font-semibold tracking-[0.05em] text-hi">
           CARDIAC <span className="font-light text-mid">TWIN</span>
         </span>
       </Link>
 
-      <span className="text-[0.6875rem] text-lo">
+      <span className="text-micro text-lo">
         Simulador de decisiones · paciente virtual, datos sintéticos
       </span>
 
@@ -161,51 +167,73 @@ function TopBar({
         key={assess.status}
         initial={{ scale: 0.96, opacity: 0.6 }}
         animate={{ scale: 1, opacity: 1 }}
-        transition={{ duration: 0.35 }}
-        className="ml-auto flex items-center gap-3 rounded-lg border px-4 py-2"
+        transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+        className="relative ml-auto flex items-center gap-2.5 rounded-lg border px-4 py-2"
         style={{ borderColor: ui.border, background: ui.bg }}
       >
+        <span className="relative flex h-[0.45rem] w-[0.45rem] items-center justify-center">
+          {assess.status !== "stable" && (
+            <span
+              className="absolute inset-0 rounded-full"
+              style={{
+                background: ui.color,
+                animation: "ping-ring 1.8s ease-out infinite",
+              }}
+            />
+          )}
+          <span
+            className="h-full w-full rounded-full"
+            style={{ background: ui.color }}
+          />
+        </span>
         <span
-          className="h-[0.45rem] w-[0.45rem] rounded-full"
-          style={{
-            background: ui.color,
-            animation:
-              assess.status === "stable"
-                ? undefined
-                : "pulse-dot 1.4s ease-in-out infinite",
-          }}
-        />
-        <span
-          className="text-[0.8125rem] font-semibold tracking-[0.02em]"
+          className="text-body font-semibold tracking-[0.02em]"
           style={{ color: ui.color }}
         >
           {ui.label}
         </span>
+        <span className="border-l border-line pl-2.5 text-micro text-lo">
+          riesgo{" "}
+          <span className="num font-mono text-label" style={{ color: ui.color }}>
+            {assess.deterioration_risk}%
+          </span>
+        </span>
       </motion.div>
-
-      <RiskBar assess={assess} />
 
       {/* el reloj: cuando queda poco, es lo más grande de la pantalla */}
       <div className="flex flex-col items-end">
-        <span className="text-[0.5625rem] tracking-[0.14em] text-dim">
-          TIEMPO HASTA ESTADO CRÍTICO
+        <span className="text-micro tracking-[0.12em] text-dim">
+          {ttc === null ? "SIN DETERIORO PROYECTADO" : "TIEMPO HASTA ESTADO CRÍTICO"}
         </span>
         <motion.span
-          animate={urgent ? { opacity: [1, 0.55, 1] } : { opacity: 1 }}
+          animate={urgent ? { opacity: [1, 0.5, 1] } : { opacity: 1 }}
           transition={
             urgent ? { duration: 1.4, repeat: Infinity } : { duration: 0.3 }
           }
-          className="font-mono text-[1.75rem] leading-none font-semibold tabular-nums"
-          style={{ color: ttc === null ? "var(--text-dim)" : "var(--crit)" }}
+          className="num font-mono text-num leading-none font-semibold"
+          style={{
+            color:
+              ttc === null
+                ? "var(--text-dim)"
+                : assess.status === "critical"
+                  ? "var(--crit)"
+                  : "var(--warn)",
+          }}
         >
-          {ttc === null ? "--:--" : mmss(ttc)}
+          {/* llegado a cero el contador ya no cuenta nada: lo dice */}
+          {ttc === null ? "--:--" : ttc <= 0 ? "AHORA" : mmss(ttc)}
         </motion.span>
       </div>
 
       <div className="flex items-center gap-2 border-l border-line pl-4">
         {source && (
           <span
-            className="rounded border px-2 py-[0.2rem] text-[0.5625rem]"
+            className="rounded border px-2 py-[0.2rem] text-micro"
+            title={
+              source === "backend"
+                ? "Los datos vienen del motor 0D del servidor"
+                : "El servidor no responde: corriendo con el motor local de respaldo"
+            }
             style={
               source === "backend"
                 ? { borderColor: "rgba(63,191,127,0.35)", color: "var(--ok)" }
@@ -217,22 +245,47 @@ function TopBar({
         )}
         {controls && (
           <>
-            <button
-              onClick={controls.togglePause}
-              className="rounded-lg border border-line-strong px-3 py-2 text-[0.6875rem] text-mid transition-colors hover:border-lo hover:text-hi"
-            >
+            <GhostButton onClick={controls.togglePause}>
               {controls.paused ? "Reanudar" : "Pausar"}
-            </button>
-            <button
-              onClick={controls.reset}
-              className="rounded-lg border border-line-strong px-3 py-2 text-[0.6875rem] text-mid transition-colors hover:border-lo hover:text-hi"
-            >
-              Reiniciar
-            </button>
+            </GhostButton>
+            <GhostButton onClick={controls.reset}>Reiniciar</GhostButton>
           </>
         )}
       </div>
+
+      {/* riesgo de deterioro: el propio borde del header */}
+      <div
+        title={`Riesgo de deterioro: ${assess.deterioration_risk}%`}
+        className="absolute inset-x-0 bottom-[-1px] h-[0.14rem] overflow-hidden"
+      >
+        <motion.div
+          className="h-full"
+          animate={{ width: `${assess.deterioration_risk}%` }}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+          style={{
+            background: `linear-gradient(90deg, transparent, ${ui.color})`,
+          }}
+        />
+      </div>
     </header>
+  );
+}
+
+function GhostButton({
+  onClick,
+  children,
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <motion.button
+      onClick={onClick}
+      whileTap={{ scale: 0.96 }}
+      className="rounded-lg border border-line-strong px-3 py-1.5 text-label text-mid transition-colors hover:border-lo hover:bg-card-hover hover:text-hi"
+    >
+      {children}
+    </motion.button>
   );
 }
 
@@ -240,83 +293,99 @@ function TopBar({
 
 function SideColumn({
   vitals,
+  assess,
   history,
 }: {
   vitals: Vitals;
+  assess: Assessment;
   history: Vitals[];
 }) {
   return (
     <div className="flex min-h-0 flex-col gap-3">
-      <div className="flex min-h-0 flex-1 flex-col rounded-[0.7rem] border border-line bg-card">
-        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2.5">
-          <span className="text-[0.6875rem] tracking-[0.14em] text-mid">
-            SIGNOS VITALES
-          </span>
-          <span className="flex items-center gap-1.5 text-[0.5625rem] text-ok">
+      <Panel
+        title="SIGNOS VITALES"
+        right={
+          <span className="flex items-center gap-1.5 text-micro text-ok">
             <span
               className="h-[0.3rem] w-[0.3rem] rounded-full bg-ok"
               style={{ animation: "pulse-dot 1.8s ease-in-out infinite" }}
             />
             EN VIVO
           </span>
-        </div>
-        <div className="flex min-h-0 flex-1 flex-col justify-around px-4 py-3">
+        }
+        className="flex-1"
+      >
+        <div className="flex min-h-0 flex-1 flex-col justify-between overflow-hidden px-4 py-2.5">
           {VITALS.map((r) => (
             <VitalRow key={r.key} row={r} vitals={vitals} history={history} />
           ))}
         </div>
-      </div>
+      </Panel>
 
-      <div className="flex min-h-0 shrink-0 flex-col rounded-[0.7rem] border border-line bg-card">
-        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2.5">
-          <span className="text-[0.6875rem] tracking-[0.14em] text-mid">
-            ECG
-          </span>
+      <Panel
+        title="ECG"
+        right={
           <span
-            className={`text-[0.625rem] ${vitals.rhythm === "sinus" ? "text-ok" : "text-crit"}`}
+            className="text-micro"
+            style={{
+              color:
+                vitals.rhythm === "sinus" ? "var(--ok)" : "var(--crit)",
+            }}
           >
             {rhythmLabel(vitals.rhythm)}
           </span>
-        </div>
-        <div className="px-3 py-2">
+        }
+      >
+        <div className="px-3 py-1.5">
           <EcgStrip
             hr={vitals.hr}
             rhythm={vitals.rhythm}
             amplitude={Math.min(1.15, Math.max(0.55, vitals.sv / 80))}
-            className="h-[4rem] w-full"
+            className="h-[2.9rem] w-full"
           />
         </div>
-      </div>
-
+        {/* Lo que el motor concluye, en una frase: antes había que deducirlo
+            de cinco números. Vive pegado al ECG para no gastar otro panel. */}
+        <div className="border-t border-line px-3 py-2">
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={assess.status}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+              transition={{ duration: 0.3 }}
+              className="text-micro leading-[1.5] text-lo"
+            >
+              {STATUS_UI[assess.status].note}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+      </Panel>
     </div>
   );
 }
 
-/** Barra de riesgo, compacta. Vive en la cabecera, donde sí hay sitio. */
-function RiskBar({ assess }: { assess: Assessment }) {
-  const c = STATUS_UI[assess.status].color;
+function Panel({
+  title,
+  right,
+  children,
+  className = "",
+}: {
+  title: string;
+  right?: React.ReactNode;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[0.5625rem] tracking-[0.14em] text-dim">
-        RIESGO DE DETERIORO
-      </span>
-      <div className="flex items-center gap-2">
-        <div className="h-[0.3rem] w-[6rem] overflow-hidden rounded-full bg-line">
-          <motion.div
-            className="h-full rounded-full"
-            animate={{ width: `${assess.deterioration_risk}%` }}
-            transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-            style={{ background: c }}
-          />
-        </div>
-        <span
-          className="font-mono text-[0.8125rem] leading-none tabular-nums"
-          style={{ color: c }}
-        >
-          {assess.deterioration_risk}%
-        </span>
-      </div>
-    </div>
+    <section
+      className={`flex min-h-0 flex-col rounded-[0.7rem] border border-line bg-card ${className}`}
+    >
+      <header className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2">
+        <h2 className="text-micro tracking-[0.14em] text-mid">{title}</h2>
+        {right}
+      </header>
+      {children}
+    </section>
   );
 }
 
@@ -341,30 +410,50 @@ function VitalRow({
     .slice(-24)
     .map((h) => (isBp ? h.sbp : (h[row.key as keyof Vitals] as number)));
 
-  const lo = series.length ? Math.min(...series) : 0;
-  const hi = series.length ? Math.max(...series) : 1;
-  const pad = Math.max((hi - lo) * 0.35, row.digits ? 0.15 : 2);
+  // La escala incluye la banda normal: si la curva se sale, se ve que se sale.
+  const lo = Math.min(row.band.lo, ...(series.length ? series : [row.band.lo]));
+  const hi = Math.max(row.band.hi, ...(series.length ? series : [row.band.hi]));
+  const pad = Math.max((hi - lo) * 0.12, row.digits ? 0.1 : 1.5);
 
-  const value = isBp
-    ? `${Math.round(vitals.sbp)}/${Math.round(vitals.dbp)}`
-    : raw.toFixed(row.digits);
+  // dirección del cambio en los últimos ~6 s
+  const prev = series.length > 3 ? series[series.length - 4] : raw;
+  const delta = raw - prev;
+  const moving = Math.abs(delta) > (row.digits ? 0.05 : 0.8);
 
   return (
     <div>
       <div className="flex items-center gap-2">
         <Icon
           className="h-[0.9rem] w-[0.9rem] shrink-0"
-          style={{ color: row.color }}
+          style={{ color: level === "ok" ? "var(--text-lo)" : row.color }}
         />
-        <span className="truncate text-[0.6875rem] text-mid">{row.label}</span>
-        <span className="text-[0.5625rem] text-dim">{row.tech}</span>
+        <span className="truncate text-label text-mid">{row.label}</span>
+        <span className="text-micro text-dim">{row.tech}</span>
+        {moving && (
+          <motion.span
+            initial={{ opacity: 0, y: delta > 0 ? 4 : -4 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="ml-auto text-micro"
+            style={{ color: level === "ok" ? "var(--text-lo)" : row.color }}
+          >
+            {delta > 0 ? "▲" : "▼"}
+          </motion.span>
+        )}
       </div>
-      <div className="mt-1 flex items-end justify-between gap-2">
+      <div className="mt-0.5 flex items-end justify-between gap-2">
         <span
-          className={`font-mono text-[1.6rem] leading-none font-semibold tabular-nums ${TONE[level]}`}
+          className="font-mono text-num leading-none font-semibold"
+          style={{ color: TONE[level] }}
         >
-          {value}
-          <span className="ml-1 text-[0.625rem] font-normal text-dim">
+          {isBp ? (
+            <span className="num">
+              <AnimatedNumber value={vitals.sbp} />/
+              <AnimatedNumber value={vitals.dbp} />
+            </span>
+          ) : (
+            <AnimatedNumber value={raw} digits={row.digits} />
+          )}
+          <span className="ml-1 text-micro font-normal text-dim">
             {row.unit}
           </span>
         </span>
@@ -373,8 +462,9 @@ function VitalRow({
           min={lo - pad}
           max={hi + pad}
           color={row.color}
+          band={row.band}
           width={92}
-          height={26}
+          height={28}
         />
       </div>
     </div>

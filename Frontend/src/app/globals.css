@@ -1,42 +1,67 @@
 @import "tailwindcss";
 
 /* ---------------------------------------------------------------------------
-   Sistema de diseño — valores extraídos de design/ref-01-seleccionar-paciente.png
-   Monitor de UCI: fondo casi negro con tinte frío, dorado como acento y acción.
+   Sistema de diseño — monitor de UCI.
+
+   Dos reglas que ordenan todo lo demás:
+
+   1. NADA por debajo de --fs-micro. La barra de decisión llegó a usar 0.4375rem
+      (~8px en un portátil) y por eso "no se entendían los botones": no es que
+      estuvieran mal escritos, es que no se leían.
+   2. El color es información, no decoración. Rojo/ámbar/verde solo dicen
+      estado; azul y violeta solo identifican series de datos; el dorado es lo
+      accionable. Si algo no significa nada, va en gris.
 --------------------------------------------------------------------------- */
 :root {
-  /* superficies */
-  --bg-page: #05070a;
-  --bg-shell: #080b0f;
-  --bg-panel: #0a0e13;
-  --bg-card: #0b0f14;
-  --bg-card-hover: #0e1319;
-  --bg-card-active: #12161c;
+  /* superficies — 4 niveles de elevación, no más */
+  --bg-page: #04060a;
+  --bg-shell: #070a0e;
+  --bg-panel: #090d12;
+  --bg-card: #0b0f15;
+  --bg-card-hover: #101720;
+  --bg-card-active: #141c26;
 
   /* bordes */
-  --line: #1b222a;
-  --line-strong: #242c36;
+  --line: #1a212a;
+  --line-strong: #262f3a;
   --line-gold: #9b7530;
 
   /* texto */
-  --text-hi: #e9eef3;
-  --text-mid: #838d98;
-  --text-lo: #67717d;
-  --text-dim: #515b66;
+  --text-hi: #eef2f6;
+  --text-mid: #97a2ae;
+  --text-lo: #6f7a86;
+  --text-dim: #566270;
 
-  /* acento */
-  --gold: #c89b48;
+  /* acento: lo accionable */
+  --gold: #cfa24f;
   --gold-dim: #8c6a28;
-  --gold-soft: rgba(200, 155, 72, 0.1);
+  --gold-soft: rgba(207, 162, 79, 0.12);
 
-  /* semánticos */
+  /* semánticos: estado del paciente */
   --ok: #3fbf7f;
   --warn: #e0a340;
   --crit: #e5484d;
   --heart: #e03b4a;
+
+  /* series de datos (no son estados) */
   --info: #5aa9e6;
   --violet: #a97bd6;
   --cyan: #38bdf8;
+
+  /* escala tipográfica — todo en rem, escala con la raíz.
+     El piso es --fs-micro: por debajo no baja nada. */
+  --fs-micro: 0.6rem;
+  --fs-label: 0.7rem;
+  --fs-body: 0.8125rem;
+  --fs-lead: 0.9375rem;
+  --fs-title: 1.125rem;
+  --fs-num-sm: 1.15rem;
+  --fs-num: 1.75rem;
+  --fs-num-lg: 2.3rem;
+
+  /* movimiento — una sola curva para todo lo que se desliza */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 @theme inline {
@@ -44,6 +69,7 @@
   --color-shell: var(--bg-shell);
   --color-panel: var(--bg-panel);
   --color-card: var(--bg-card);
+  --color-card-hover: var(--bg-card-hover);
   --color-card-hi: var(--bg-card-active);
   --color-line: var(--line);
   --color-line-strong: var(--line-strong);
@@ -60,38 +86,67 @@
   --color-info: var(--info);
   --color-violet: var(--violet);
   --color-cyan: var(--cyan);
+
+  --text-micro: var(--fs-micro);
+  --text-label: var(--fs-label);
+  --text-body: var(--fs-body);
+  --text-lead: var(--fs-lead);
+  --text-title: var(--fs-title);
+  --text-num-sm: var(--fs-num-sm);
+  --text-num: var(--fs-num);
+  --text-num-lg: var(--fs-num-lg);
+
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
+/* -------------------------------------------------------------- animaciones */
+
 /* El ECG se desplaza a velocidad constante, como la tira de papel. */
 @keyframes ecg-scroll {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    transform: translateX(-50%);
-  }
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
 }
 
 @keyframes pulse-dot {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.25;
-  }
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
 }
 
-/* Diseñamos contra la referencia de 1280×853 y escalamos todo con la raíz,
-   así rem y spacing de Tailwind escalan solos.
+/* Halo que se expande una vez: marca que algo acaba de cambiar de verdad. */
+@keyframes ping-ring {
+  0% { transform: scale(0.9); opacity: 0.55; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Barrido de luz: recorre un borde cuando el sistema está calculando. */
+@keyframes sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(200%); }
+}
+
+/* Respiración lenta para las zonas en alerta sostenida. Sin parpadeo duro:
+   el parpadeo cansa y en una demo de 3 minutos se vuelve ruido. */
+/* El pulso que viaja por la cadena causal: nace en un eslabón y muere en el
+   siguiente, así que la propagación se ve en vez de deducirse. */
+@keyframes chain-pulse {
+  0% { transform: translateX(-0.9rem) scale(0.6); opacity: 0; }
+  25% { opacity: 1; }
+  70% { transform: translateX(0.9rem) scale(1); opacity: 0; }
+  100% { transform: translateX(0.9rem) scale(0.6); opacity: 0; }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.42; }
+}
+
+/* ------------------------------------------------------------------ escalado */
+
+/* Todo el diseño está en rem y la raíz escala con la ventana, así que el
+   layout es el mismo a 1440×900 que a 1840×1230.
    Se toma el MENOR de ancho y alto: escalar solo por ancho hace que en una
-   pantalla ancha y baja el contenido se salga por abajo. 80 = 1280/16 y
-   Los divisores bajaron de 80/53.3 a 70/47: en un portátil de 1440×900
-   la base pasa de ~17px a ~19px. Todo el diseño está en rem, así que sube
-   en bloque y sigue cabiendo. El texto era ilegible en pantallas que no
-   fueran el 1840×1230 de la maqueta. */
+   pantalla ancha y baja el contenido se salga por abajo. */
 html {
   font-size: clamp(13px, min(100vw / 70, 100vh / 47), 44px);
 }
@@ -105,5 +160,30 @@ body {
 }
 
 ::selection {
-  background: rgba(200, 155, 72, 0.25);
+  background: rgba(207, 162, 79, 0.25);
+}
+
+/* Foco visible y consistente. Antes no había ninguno: la pantalla era
+   inoperable con teclado, que es lo primero que revisa cualquiera que
+   evalúe accesibilidad. */
+:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  border-radius: 0.4rem;
+}
+
+/* Números que cambian solos: tabular para que no bailen de ancho. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

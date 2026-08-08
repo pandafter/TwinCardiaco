@@ -1,22 +1,22 @@
 "use client";
 
 import { useMemo } from "react";
-import { caseClock, type Vitals } from "@/lib/engine";
+import type { Vitals } from "@/lib/engine";
 import type { Branch } from "@/lib/whatif";
 
 export const SERIES = [
-  { key: "hr", label: "FC (bpm)", color: "var(--crit)" },
-  { key: "map", label: "MAP (mmHg)", color: "var(--warn)" },
-  { key: "spo2", label: "SpO₂ (%)", color: "var(--info)" },
-  { key: "lactate", label: "Lactato (mmol/L)", color: "var(--violet)" },
+  { key: "hr", label: "FC (bpm)", human: "Pulso", color: "var(--crit)" },
+  { key: "map", label: "MAP (mmHg)", human: "Presión de bombeo", color: "var(--warn)" },
+  { key: "spo2", label: "SpO₂ (%)", human: "Oxígeno en sangre", color: "var(--info)" },
+  { key: "lactate", label: "Lactato (mmol/L)", human: "Falta de oxígeno", color: "var(--violet)" },
 ] as const;
 
 const W = 1000;
 const H = 260;
-const PAD_L = 46;
-const PAD_R = 12;
-const PAD_T = 10;
-const PAD_B = 30;
+const PAD_L = 42;
+const PAD_R = 40;
+const PAD_T = 12;
+const PAD_B = 26;
 
 /** Escala principal 0–180: FC, MAP y SpO₂ comparten rango clínico. */
 const yMain = (v: number) =>
@@ -26,6 +26,16 @@ const yLact = (v: number) =>
   H - PAD_B - (Math.min(6, Math.max(0, v)) / 6) * (H - PAD_T - PAD_B) * 0.78;
 
 const TICKS = [180, 100, 70, 0];
+const LACT_TICKS = [0, 2, 4, 6];
+
+/** mm:ss relativo a "ahora": −2:00, ahora, +1:30. */
+function relLabel(dt: number) {
+  if (Math.abs(dt) < 8) return "ahora";
+  const s = Math.abs(Math.round(dt));
+  const m = Math.floor(s / 60);
+  const r = String(s % 60).padStart(2, "0");
+  return `${dt < 0 ? "−" : "+"}${m}:${r}`;
+}
 
 export function TrendChart({
   history,
@@ -46,9 +56,7 @@ export function TrendChart({
     const t0 = history[0].t;
     const tNow = history[history.length - 1].t;
     // con proyección el dominio se extiende al horizonte futuro
-    const tEnd = projection
-      ? tNow + projection.points.length
-      : tNow;
+    const tEnd = projection ? tNow + projection.points.length : tNow;
     const span = Math.max(1, tEnd - t0);
     const x = (t: number) => PAD_L + ((t - t0) / span) * (W - PAD_L - PAD_R);
 
@@ -88,11 +96,11 @@ export function TrendChart({
         }))
       : [];
 
-    const long = span >= 240;
+    // Tiempo RELATIVO a ahora. Un eje que decía "58:26" obligaba a preguntarse
+    // qué hora era esa; "−2:00" se entiende sin preguntar nada.
     const xTicks = Array.from({ length: 6 }, (_, i) => {
       const t = t0 + (span * i) / 5;
-      const c = caseClock(t);
-      return { x: x(t), label: long ? c.hhmm : c.hhmmss.slice(3) };
+      return { x: x(t), label: relLabel(t - tNow) };
     });
 
     const critical = history.find((v) => v.map < 60);
@@ -106,6 +114,8 @@ export function TrendChart({
       viewBox={`0 0 ${W} ${H}`}
       preserveAspectRatio="none"
       className="h-full w-full"
+      role="img"
+      aria-label="Tendencia de los signos vitales en el tiempo"
     >
       {TICKS.map((t) => (
         <g key={t}>
@@ -131,6 +141,30 @@ export function TrendChart({
         </g>
       ))}
 
+      {/* eje derecho: el lactato tiene su propia escala y antes no se decía.
+          Una línea violeta a media altura no significa nada sin este eje. */}
+      {LACT_TICKS.map((t) => (
+        <text
+          key={t}
+          x={W - PAD_R + 8}
+          y={yLact(t) + 3.5}
+          fontSize="10"
+          fill="color-mix(in srgb, var(--violet) 70%, transparent)"
+          className="font-mono"
+        >
+          {t}
+        </text>
+      ))}
+      <text
+        x={W - PAD_R + 8}
+        y={PAD_T + 4}
+        fontSize="8"
+        fill="var(--text-dim)"
+        letterSpacing="0.6"
+      >
+        mmol/L
+      </text>
+
       {/* tramo de inestabilidad */}
       {alertX !== null && !projection && (
         <rect
@@ -139,7 +173,7 @@ export function TrendChart({
           width={W - PAD_R - alertX}
           height={H - PAD_T - PAD_B}
           fill="var(--crit)"
-          opacity="0.07"
+          opacity="0.06"
         />
       )}
 
@@ -152,7 +186,7 @@ export function TrendChart({
             width={W - PAD_R - nowX}
             height={H - PAD_T - PAD_B}
             fill="var(--text-hi)"
-            opacity="0.03"
+            opacity="0.035"
           />
           <line
             x1={nowX}
@@ -200,43 +234,60 @@ export function TrendChart({
         />
       ))}
 
-      {/* proyección: punteada y tenue. Nunca se confunde con lo medido. */}
-      {projPaths.map((p) => (
-        <path
-          key={p.key}
-          d={p.d}
-          fill="none"
-          stroke={p.color}
-          strokeWidth="1.5"
-          strokeDasharray="5 4"
-          opacity="0.6"
-          vectorEffect="non-scaling-stroke"
-        />
-      ))}
+      {/* Proyección: punteada, tenue y TRAZADA de izquierda a derecha al
+          aparecer. El trazo hace evidente que el futuro se está calculando
+          ahora, no que estaba dibujado desde antes.
+
+          Se anima una máscara, no el strokeDasharray: el trazo YA es punteado
+          y animar su dashoffset movería el patrón en vez de revelarlo. */}
+      {projection && nowX !== null && (
+        <>
+          <defs>
+            <clipPath id={`reveal-${projection.key}`}>
+              <rect x={nowX} y="0" width="0" height={H}>
+                <animate
+                  attributeName="width"
+                  from="0"
+                  to={W - PAD_R - nowX}
+                  dur="0.6s"
+                  fill="freeze"
+                  calcMode="spline"
+                  keySplines="0.22 1 0.36 1"
+                  keyTimes="0;1"
+                />
+              </rect>
+            </clipPath>
+          </defs>
+          <g clipPath={`url(#reveal-${projection.key})`}>
+            {projPaths.map((p) => (
+              <path
+                key={p.key}
+                d={p.d}
+                fill="none"
+                stroke={p.color}
+                strokeWidth="1.6"
+                strokeDasharray="5 4"
+                opacity="0.78"
+                vectorEffect="non-scaling-stroke"
+              />
+            ))}
+          </g>
+        </>
+      )}
 
       {xTicks.map((t, i) => (
         <text
           key={i}
           x={t.x}
-          y={H - 12}
+          y={H - 8}
           textAnchor="middle"
           fontSize="10"
-          fill="var(--text-lo)"
+          fill={t.label === "ahora" ? "var(--text-mid)" : "var(--text-lo)"}
           className="font-mono"
         >
           {t.label}
         </text>
       ))}
-      <text
-        x={(PAD_L + W - PAD_R) / 2}
-        y={H - 1}
-        textAnchor="middle"
-        fontSize="9"
-        fill="var(--text-dim)"
-        letterSpacing="1.4"
-      >
-        HORA
-      </text>
     </svg>
   );
 }
