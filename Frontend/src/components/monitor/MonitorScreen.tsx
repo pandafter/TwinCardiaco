@@ -114,7 +114,11 @@ export function MonitorScreen({
 
       <DecisionBar
         branches={branches}
-        decisionAt={vitals.t}
+        // El MISMO instante que las cuatro ramas, no `vitals.t`. Las ramas se
+        // proyectan desde el bucket de 10 s para poder cachearlas; preguntando
+        // desde el tiempo exacto se comparaban dos instantes distintos y
+        // "¿y si no hago nada?" devolvía +2.5 mmHg contra sí mismo.
+        decisionAt={bucket}
         onHover={setHovered}
         onAsk={setAsked}
         onApply={(k: BranchKey) => controls?.apply(k)}
