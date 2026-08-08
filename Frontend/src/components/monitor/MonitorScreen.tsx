@@ -13,7 +13,7 @@ import {
   type Level,
   type Vitals,
 } from "@/lib/engine";
-import { runAgents, type AgentOutput } from "@/lib/agents";
+import { agentsFromBackend, runAgents, type AgentOutput } from "@/lib/agents";
 import { projectAll, type Branch, type BranchKey } from "@/lib/whatif";
 import {
   AgentCardio,
@@ -56,8 +56,8 @@ const VITAL_ROWS = [
 ] as const;
 
 const AGENT_ICON = {
-  clinical: AgentCardio,
-  simulation: AgentSim,
+  cardiologia: AgentCardio,
+  fisiologia: AgentSim,
   orchestrator: AgentOrchestrator,
 } as const;
 
@@ -70,11 +70,8 @@ export function MonitorScreen({
   frozen?: boolean;
   live?: boolean;
 }) {
-  const { vitals, assess, history, controls, engine } = usePatientState({
-    startAt,
-    frozen,
-    live,
-  });
+  const { vitals, assess, history, controls, engine, backend } =
+    usePatientState({ startAt, frozen, live });
 
   const [hovered, setHovered] = useState<Branch | null>(null);
   const [asked, setAsked] = useState<Branch | null>(null);
@@ -84,18 +81,24 @@ export function MonitorScreen({
   const bucket = Math.floor(vitals.t / 10) * 10;
   const branches = useMemo(() => projectAll(bucket), [bucket]);
 
+  // Con backend vivo, las opiniones vienen del servidor y el front solo las
+  // muestra. Sin backend, se derivan del motor local (modo respaldo).
+  const fromBackend = controls?.source === "backend" && !!backend;
   const agents = useMemo(
-    () => runAgents(vitals, assess, branches),
-    [vitals, assess, branches],
+    () =>
+      fromBackend
+        ? agentsFromBackend(backend!.agents, backend!.consensus)
+        : runAgents(vitals, assess, branches),
+    [fromBackend, backend, vitals, assess, branches],
   );
 
-  const applied = engine.interventionKey;
+  const applied = fromBackend ? backend!.applied : engine.interventionKey;
   const projection = hovered ?? asked;
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
       <TopBar assess={assess} />
-      <Explainer />
+      <Explainer source={controls?.source ?? null} />
 
       <div className="grid min-h-0 flex-1 grid-cols-[17.4rem_minmax(0,1fr)_20.5rem] gap-2.5 px-3 py-2.5">
         <LeftColumn vitals={vitals} history={history} />
@@ -128,7 +131,7 @@ export function MonitorScreen({
  * Una franja que dice qué es esto. Sin ella, alguien que abre la pantalla ve
  * números moviéndose y no sabe qué está mirando ni por qué debería importarle.
  */
-function Explainer() {
+function Explainer({ source }: { source: "backend" | "local" | null }) {
   return (
     <div className="flex shrink-0 items-center gap-3 border-b border-line bg-[rgba(56,189,248,0.04)] px-4 py-1.5">
       <span className="rounded border border-[rgba(56,189,248,0.3)] px-2 py-[0.1rem] text-[0.4375rem] tracking-[0.14em] text-cyan">
@@ -141,7 +144,20 @@ function Explainer() {
         </span>
         : prueba una decisión y mira cómo cambia su futuro.
       </span>
-      <span className="ml-auto text-[0.4375rem] text-dim">
+      {/* de dónde salen los datos: nunca hay ambigüedad sobre eso */}
+      {source && (
+        <span
+          className="ml-auto shrink-0 rounded border px-2 py-[0.1rem] text-[0.4375rem] tracking-[0.1em]"
+          style={
+            source === "backend"
+              ? { borderColor: "rgba(63,191,127,0.35)", color: "var(--ok)" }
+              : { borderColor: "var(--line-strong)", color: "var(--text-lo)" }
+          }
+        >
+          {source === "backend" ? "MOTOR DEL SERVIDOR" : "MOTOR LOCAL (RESPALDO)"}
+        </span>
+      )}
+      <span className="text-[0.4375rem] text-dim">
         Prototipo de investigación y educación · datos sintéticos · no es una
         herramienta clínica
       </span>
@@ -239,11 +255,14 @@ function VitalRow({
         <Icon className="h-[0.95rem] w-[0.95rem]" />
       </span>
       <div className="min-w-0 flex-1">
-        {/* nombre humano arriba, término clínico debajo */}
-        <div className="truncate text-[0.5625rem] text-mid">{row.label}</div>
+        {/* nombre humano primero; el término clínico al lado, en pequeño */}
+        <div className="truncate text-[0.5625rem] text-mid">
+          {row.label}
+          <span className="ml-1 text-[0.4375rem] text-dim">{row.tech}</span>
+        </div>
         <div className="mt-0.5 flex items-baseline gap-1">
           <span
-            className={`font-mono text-[1.15rem] leading-none font-semibold tabular-nums ${TONE[level]}`}
+            className={`font-mono text-[1.05rem] leading-none font-semibold tabular-nums ${TONE[level]}`}
           >
             {value}
           </span>
@@ -254,7 +273,6 @@ function VitalRow({
             </span>
           )}
         </div>
-        <div className="truncate text-[0.4375rem] text-dim">{row.tech}</div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <Sparkline
@@ -381,7 +399,9 @@ function CenterColumn({
               </span>
               <span className="text-mid"> — {projection.verdict}</span>
               <span className="ml-2 text-dim">
-                Línea punteada: futuro simulado, no medido.
+                Línea punteada: futuro simulado, no medido. Supone que la
+                causa de fondo sigue evolucionando igual; no modela
+                revascularización.
               </span>
             </div>
           ) : (
@@ -410,7 +430,7 @@ function RightColumn({
 
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
-      <Card className="flex min-h-0 flex-[1.6] flex-col overflow-hidden">
+      <Card className="flex min-h-0 flex-[2.4] flex-col overflow-hidden">
         <CardHeader
           title="AGENTES DE IA"
           live={active}
@@ -489,7 +509,7 @@ function RightColumn({
         </div>
       </Card>
 
-      <Card className="flex min-h-0 flex-1 flex-col">
+      <Card className="flex max-h-[13rem] min-h-0 flex-1 flex-col">
         <CardHeader title="LO QUE HA PASADO" />
         <div className="flex min-h-0 flex-1 flex-col justify-around px-3 py-2">
           {events.length === 0 && (

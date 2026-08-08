@@ -27,14 +27,14 @@ import { TrajectoryChart } from "./TrajectoryChart";
 
 // Tres agentes, los mismos del monitor, hablando sin jerga.
 const AGENT_ICON: Record<AgentId, typeof AgentCardio> = {
-  clinical: AgentCardio,
-  simulation: AgentSim,
+  cardiologia: AgentCardio,
+  fisiologia: AgentSim,
   orchestrator: AgentOrchestrator,
 };
 
 const AGENT_STATUS: Record<AgentId, string> = {
-  clinical: "El pulso va cediendo y el corazón vuelve a llenarse mejor.",
-  simulation: "Trayectoria actualizada con la decisión tomada.",
+  cardiologia: "El pulso va cediendo: el corazón vuelve a llenarse mejor.",
+  fisiologia: "Llega más sangre y el lactato empieza a bajar.",
   orchestrator: "El paciente va hacia la estabilización.",
 };
 

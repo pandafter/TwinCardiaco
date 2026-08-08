@@ -8,8 +8,10 @@ export type PatientControls = {
   paused: boolean;
   togglePause: () => void;
   reset: () => void;
-  /** aplica una intervención al paciente real de la sesión */
+  /** propone una intervención; con backend la decide el servidor */
   apply: (key: string) => void;
+  /** de dónde vienen los datos ahora mismo */
+  source: "backend" | "local";
 };
 
 /**
@@ -57,13 +59,23 @@ export function usePatientState({
   const [frame, setFrame] = useState<Frame>(init.frame);
   const [history, setHistory] = useState<Vitals[]>(init.history);
   const [paused, setPaused] = useState(false);
+  // fuerza el re-render cuando cambia algo del store que no es el frame
+  // (opiniones de agentes, conflicto, ramas what-if)
+  const [, setTick] = useState(0);
 
   useEffect(() => {
     if (live) {
       const sync = () => {
         setFrame(patientStore.frame);
-        setHistory([...patientStore.engine.getHistory()]);
+        // el store es el dueño de la historia: con backend son los ticks
+        // recibidos, con motor local los que produjo el Engine
+        setHistory(
+          patientStore.source === "backend"
+            ? [...patientStore.history]
+            : [...patientStore.engine.getHistory()],
+        );
         setPaused(patientStore.paused);
+        setTick((n) => n + 1);
       };
       sync();
       return patientStore.subscribe(sync);
@@ -82,7 +94,8 @@ export function usePatientState({
         paused,
         togglePause: () => patientStore.setPaused(!patientStore.paused),
         reset: () => patientStore.reset(),
-        apply: (key: string) => patientStore.applyIntervention(key),
+        apply: (key: string) => patientStore.applyInterventionKey(key),
+        source: patientStore.source,
       }
     : null;
 
@@ -91,5 +104,15 @@ export function usePatientState({
     history,
     engine: live ? patientStore.engine : init.engine,
     controls,
+    /** lo que mandó el backend; vacío mientras corra el motor local */
+    backend: live
+      ? {
+          agents: patientStore.agents,
+          conflict: patientStore.conflict,
+          consensus: patientStore.consensus,
+          simulation: patientStore.simulation,
+          applied: patientStore.applied,
+        }
+      : null,
   };
 }
