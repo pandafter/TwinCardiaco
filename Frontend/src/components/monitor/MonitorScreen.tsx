@@ -1,6 +1,7 @@
 "use client";
 
 import { usePatientState } from "@/hooks/usePatientState";
+import { myocardialStress } from "@/lib/cardiacCycle";
 import {
   LEVEL,
   caseClock,
@@ -25,7 +26,7 @@ import {
   Thermometer,
 } from "@/components/icons";
 import { BottomNav, MonitorActions, TopBar } from "@/components/shell/Shell";
-import { BeatingHeart } from "./BeatingHeart";
+import { Heart3DView } from "./Heart3DView";
 import { EcgStrip } from "./EcgStrip";
 import { Sparkline } from "./Sparkline";
 import { SERIES, TrendChart } from "./TrendChart";
@@ -219,12 +220,13 @@ function CenterColumn({
             }}
           />
 
-          <BeatingHeart
+          <Heart3DView
             hr={vitals.hr}
             rhythm={vitals.rhythm}
             strokeVolume={vitals.sv}
             perfusion={vitals.perfusion_index}
-            className="absolute top-1/2 left-1/2 h-[92%] w-[26%] -translate-x-1/2 -translate-y-1/2"
+            ischemia={myocardialStress(vitals.hr, vitals.perfusion_index)}
+            className="absolute inset-0"
           />
 
           {/* estado hemodinámico */}
