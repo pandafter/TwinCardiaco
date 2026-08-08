@@ -39,6 +39,7 @@ import {
 } from "@/components/icons";
 import { BottomNav, TopBar } from "@/components/shell/Shell";
 import { BeatingHeart } from "@/components/monitor/BeatingHeart";
+import { EcgStrip } from "@/components/monitor/EcgStrip";
 import { Sparkline } from "@/components/monitor/Sparkline";
 
 const TONE: Record<Level, string> = {
@@ -142,33 +143,29 @@ function PatientColumn({
 
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
-      <Card className="flex flex-col">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 px-3 py-2.5 text-[0.5625rem] tracking-[0.14em] text-mid">
           ESTADO ACTUAL DEL PACIENTE
         </div>
 
-        <div className="relative h-[7.5rem] shrink-0">
+        <div className="relative h-[9rem] shrink-0 overflow-hidden">
           <BeatingHeart
             hr={vitals.hr}
             rhythm={vitals.rhythm}
             strokeVolume={vitals.sv}
             perfusion={vitals.perfusion_index}
-            className="absolute top-1/2 left-[26%] h-[104%] w-[44%] -translate-x-1/2 -translate-y-1/2"
+            className="absolute top-1/2 left-[27%] h-[92%] w-[46%] -translate-x-1/2 -translate-y-1/2"
           />
-          <svg
-            viewBox="0 0 100 40"
-            className="absolute top-1/2 right-2 h-[2.2rem] w-[42%] -translate-y-1/2"
-            fill="none"
-          >
-            <path
-              d="M2 24h14l5-16 7 30 5-20 4 6h60"
-              stroke="var(--crit)"
-              strokeWidth="1.6"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              vectorEffect="non-scaling-stroke"
+          {/* EcgStrip trae su propio `relative`, que en Tailwind gana sobre
+              un `absolute` pasado por className: hay que envolverlo. */}
+          <div className="absolute top-1/2 right-0 h-[3.6rem] w-[50%] -translate-y-1/2">
+            <EcgStrip
+              hr={vitals.hr}
+              rhythm={vitals.rhythm}
+              amplitude={Math.min(1.1, Math.max(0.5, vitals.sv / 85))}
+              className="h-full w-full"
             />
-          </svg>
+          </div>
         </div>
 
         <div className="shrink-0 px-3 pb-1">
@@ -177,7 +174,7 @@ function PatientColumn({
           </span>
         </div>
 
-        <div className="flex flex-col gap-3 px-3 pt-2.5 pb-3">
+        <div className="flex min-h-0 flex-1 flex-col justify-between px-3 pt-2.5 pb-3">
           {VITALS.map((v) => {
             const isBp = v.key === "bp";
             const raw = isBp
@@ -197,7 +194,7 @@ function PatientColumn({
                   <Icon className="h-[0.9rem] w-[0.9rem]" />
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-[0.5rem] text-mid">
+                  <div className="truncate text-[0.5625rem] text-mid">
                     {v.label}
                   </div>
                   <div className="mt-0.5 flex items-baseline gap-1">
@@ -263,7 +260,7 @@ function PatientColumn({
             min={40}
             max={100}
             color="var(--crit)"
-            width={196}
+            width={272}
             height={26}
           />
         </div>
@@ -331,7 +328,7 @@ function ActionColumn({
         })}
       </div>
 
-      <div className="mt-2.5 grid grid-cols-5 gap-2.5">
+      <div className="mt-2.5 grid min-h-0 flex-1 grid-cols-5 gap-2.5">
         {shown.map((a) => (
           <ActionCard
             key={a.id}
@@ -378,7 +375,7 @@ function ActionCard({
 
   return (
     <div
-      className="flex min-w-0 flex-col rounded-[0.6rem] border bg-[#0a0e14] p-3 transition-colors"
+      className="flex min-w-0 flex-col rounded-[0.6rem] border bg-[#0a0e14] p-3.5 transition-colors"
       style={{
         borderColor: chosen ? a.color : "var(--line)",
         boxShadow: chosen
@@ -394,37 +391,35 @@ function ActionCard({
           />
         )}
         <span
-          className="truncate text-[0.4375rem] tracking-[0.14em]"
+          className="truncate text-[0.5rem] tracking-[0.14em]"
           style={{ color: isIntervention ? a.color : "var(--text-dim)" }}
         >
           {isIntervention ? `${a.kind} ${a.letter}` : a.kind}
         </span>
       </div>
 
-      <div className="mt-1.5 text-[0.6875rem] leading-tight font-medium text-hi">
+      <div className="mt-2 text-[0.8125rem] leading-tight font-medium text-hi">
         {a.title}
       </div>
-      <div className="mt-0.5 h-[0.75rem] text-[0.5rem] text-lo">
-        {a.subtitle ?? ""}
-      </div>
+      <div className="mt-1 text-[0.5625rem] text-lo">{a.subtitle}</div>
 
       {/* el icono grande ancla visualmente cada tarjeta */}
       <div
-        className="mt-2 flex h-[2.6rem] w-[2.6rem] items-center justify-center rounded-[0.5rem] border"
+        className="mt-3 flex h-[3rem] w-[3rem] items-center justify-center rounded-[0.55rem] border"
         style={{
           borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
           background: `color-mix(in srgb, ${a.color} 9%, transparent)`,
           color: a.color,
         }}
       >
-        <Icon className="h-[1.25rem] w-[1.25rem]" />
+        <Icon className="h-[1.45rem] w-[1.45rem]" />
       </div>
 
-      <p className="mt-2.5 text-[0.5rem] leading-[1.55] text-mid">
+      <p className="mt-3 text-[0.5625rem] leading-[1.6] text-mid">
         {a.description}
       </p>
 
-      <div className="mt-3 text-[0.4375rem] tracking-[0.12em] text-dim">
+      <div className="mt-3.5 text-[0.5rem] tracking-[0.12em] text-dim">
         {a.sectionTitle}
       </div>
 
@@ -440,9 +435,9 @@ function ActionCard({
           {a.checks.map((c) => (
             <li
               key={c}
-              className="flex items-center gap-1.5 text-[0.5rem] text-mid"
+              className="flex items-center gap-1.5 text-[0.5625rem] text-mid"
             >
-              <CheckSquare className="h-[0.6rem] w-[0.6rem] shrink-0 text-lo" />
+              <CheckSquare className="h-[0.65rem] w-[0.65rem] shrink-0 text-lo" />
               {c}
             </li>
           ))}
@@ -451,7 +446,7 @@ function ActionCard({
       {a.notes && (
         <ul className="mt-1.5 space-y-1.5">
           {a.notes.map((n) => (
-            <li key={n} className="text-[0.5rem] leading-[1.5] text-mid">
+            <li key={n} className="text-[0.5625rem] leading-[1.6] text-mid">
               {n}
             </li>
           ))}
@@ -459,18 +454,18 @@ function ActionCard({
       )}
 
       <div className="mt-auto pt-3">
-        <div className="text-[0.4375rem] tracking-[0.12em] text-dim">
+        <div className="text-[0.5rem] tracking-[0.12em] text-dim">
           {a.timeLabel}
         </div>
-        <div className="mt-1 flex items-center gap-1.5">
-          <Clock className="h-[0.7rem] w-[0.7rem]" style={{ color: a.color }} />
-          <span className="text-[0.5625rem]" style={{ color: a.color }}>
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <Clock className="h-[0.8rem] w-[0.8rem]" style={{ color: a.color }} />
+          <span className="text-[0.625rem]" style={{ color: a.color }}>
             {a.time}
           </span>
         </div>
         <button
           onClick={onChoose}
-          className="mt-2 w-full rounded-md border py-2 text-[0.5625rem] transition-colors"
+          className="mt-2.5 w-full rounded-md border py-2.5 text-[0.625rem] transition-colors"
           style={{
             borderColor: `color-mix(in srgb, ${a.color} 45%, transparent)`,
             color: a.color,
@@ -494,8 +489,8 @@ function EffectRow({ e }: { e: Effect }) {
       ? "var(--info)"
       : "var(--ok)";
   return (
-    <li className="flex items-center gap-1.5 text-[0.5rem] text-mid">
-      <span className="w-[0.5rem] shrink-0" style={{ color }}>
+    <li className="flex items-center gap-1.5 text-[0.5625rem] text-mid">
+      <span className="w-[0.55rem] shrink-0" style={{ color }}>
         {glyph}
       </span>
       {e.label}
@@ -508,11 +503,11 @@ function EffectRow({ e }: { e: Effect }) {
 function AgentColumn() {
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
-      <Card className="flex flex-col">
+      <Card className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 px-3 py-2.5 text-[0.5625rem] tracking-[0.14em] text-mid">
           RECOMENDACIONES DE LOS AGENTES
         </div>
-        <div className="flex flex-col">
+        <div className="flex min-h-0 flex-1 flex-col justify-between">
           {AGENT_RECOMMENDATIONS.map((r, i) => {
             const meta = AGENT_META.find((m) => m.id === r.id)!;
             const Icon = AGENT_ICON[r.id as keyof typeof AGENT_ICON];
