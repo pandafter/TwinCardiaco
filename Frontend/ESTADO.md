@@ -122,7 +122,19 @@ porque el espacio de salida es cerrado. Hoy son reglas locales (sin red, sin
 API key, sin latencia); el hueco para el LLM está marcado.
 
 **`lib/whatif.ts`**: cuatro ramas (`none`, `inotrope`, `vasopressor`, `fluid`)
-con nombres humanos.
+con nombres humanos y veredicto en una frase sin jerga. Se precalculan y se
+cachean, así el hover dibuja la trayectoria al instante.
+
+**El monitor es UNA escena que cambia de foco**, no siete bloques a la vez:
+el paciente / lo que dice la IA / las opciones / el resultado. Avanza sola
+con el estado, y las tabs permiten volver a cualquiera. `FlowGuide` muestra
+en qué paso va el caso y qué se espera del usuario.
+
+**Tres agentes**: Cardiología (protege el miocardio), Fisiología (protege el
+oxígeno sistémico) y Orquestador. **No fusiones los dos primeros**: el
+conflicto entre ellos es el mejor activo del sistema y nace de que sus
+objetivos se oponen en shock cardiogénico. Farmacología se eliminó (sus
+riesgos ya vienen en `risks[]`) y Simulación no opina — es una tool.
 
 ---
 
@@ -160,24 +172,51 @@ rutas, y una captura mirada de verdad.
   empuja la última columna fuera de la pantalla.
 - **Componentes con `relative` propio** (`EcgStrip`) ignoran un `absolute`
   pasado por `className`: en Tailwind `relative` gana. Hay que envolverlos.
-- **Escalado**: la raíz usa `min(100vw/80, 100vh/53.3)`. Se diseña contra
-  1280×853 y todo escala con `rem`. **No uses px absolutos en arbitrary
-  values** (`p-[14px]` no escala; `p-3.5` sí).
+- **Escalado**: la raíz usa `clamp(14px, min(100vw/78, 100vh/46), 44px)`.
+  Todo escala con `rem`. **No uses px absolutos en arbitrary values**
+  (`p-[14px]` no escala; `p-3.5` sí). El divisor de alto era 53.3 y en una
+  laptop normal la base caía a ~14px: todo se veía un tercio más pequeño que
+  en la maqueta. Si vuelves a tocarlo, verifica a 1440×800, no solo a 1840.
 - **El estiramiento vertical** (`flex-1` + `justify-between`) reparte el
   sobrante y deja huecos enormes. Revisa la captura, no el código.
+- **Las ramas what-if se juzgan contra "no hacer nada", no contra el estado
+  inicial.** Con un paciente que se deteriora, TODAS las ramas empeoran en
+  absoluto y las cuatro opciones decían literalmente lo mismo. La
+  comparación relativa (`vsNone`) es la que produce el dilema del producto.
+- **La intervención no se puede pasar al constructor del motor** para
+  proyectar: su bucle termina en `decisionAt - dt` y la condición `t >= at`
+  nunca se cumple. Se aplica dentro del bucle de proyección.
 
 ---
 
 ## 7. Qué falta
 
-1. **Cerrar el what-if en lenguaje natural**: `ask.ts` ya traduce la frase y
-   los gráficos ya tienen el render punteado. Falta conectar la caja de texto
-   con la rama proyectada y decir explícitamente "fuera de alcance" cuando la
-   pregunta no cabe en el modelo. **Es lo que justifica la IA entera**: sin
-   ella hay cuatro botones; con ella, escenarios infinitos.
-2. Sustituir las reglas de `ask.ts` por una llamada real al modelo, dejando
-   las reglas como plan B.
-3. Verificar la conexión SSE contra el backend corriendo de verdad.
+Del lado del **frontend**:
+
+1. Verificar el SSE contra el backend corriendo de verdad. Está escrito y
+   degrada bien sin él, pero nunca se ha probado con datos reales.
+2. `/compare` y `/response` siguen con el lenguaje y los agentes viejos; el
+   monitor ya cubre su función con las escenas "Las opciones" y "El
+   resultado". O se alinean o se eliminan.
+
+Del lado del **backend** (pedido al equipo, en orden):
+
+1. **`POST /api/ask`** — no existe y es lo que justifica la IA. El contrato
+   exacto está implementado en `lib/ask.ts`: el LLM devuelve
+   `{intervention, efficacy, delay_s}` con structured output y espacio
+   cerrado, nunca números de fisiología. Necesita que `Intervention.apply()`
+   acepte `efficacy` y `delay`.
+2. **`filling_pct` en `vitals.tick`** — es el segundo eslabón de la cadena
+   causal. Sin él, el front tiene que derivarlo de `hr`, que es justo lo que
+   la regla 2 prohíbe.
+3. **`deterioration_risk` y `trend`** — o los manda el servidor o se quitan
+   de la pantalla.
+4. **`vs_none` en cada escenario de `compare_scenarios()`** — comparar contra
+   el estado inicial no distingue nada, porque en un paciente que se
+   deteriora todas las ramas empeoran. Ver la trampa en la sección 6.
+5. **Portal**: `PUBLISH_PATH` sigue siendo un `TODO`, falta el listener del
+   canal `actions` y falta presence. El SSE ya salva la demo — no jugarse la
+   presentación peleando con esto.
 
 ---
 
