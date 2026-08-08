@@ -14,12 +14,10 @@ import {
   ArrowRight,
   Bulb,
   CheckSquare,
-  ChevronRight,
   Droplet,
   Female,
   Flask,
   Gauge,
-  Gear,
   HeartRate,
   Info,
   LogoMark,
@@ -155,9 +153,6 @@ function TopBar() {
             <div className="mt-0.5 text-[0.625rem] text-ok">3 conectados</div>
           </div>
         </div>
-        <button className="flex h-[2.3rem] w-[2.3rem] items-center justify-center rounded-lg border border-line-strong text-lo transition-colors hover:text-mid">
-          <Gear className="h-[1.05rem] w-[1.05rem]" />
-        </button>
       </div>
     </header>
   );
@@ -273,13 +268,8 @@ function CenterColumn({
         SELECCIONA UN PACIENTE
       </h1>
       <p className="mt-1.5 text-[0.625rem] text-mid">
-        Elige un caso clínico existente o crea un paciente personalizado.
+        Elige el caso clínico que quieres simular.
       </p>
-
-      <div className="mt-3.5 flex items-center gap-5 rounded-[0.625rem] border border-line px-4">
-        <Tab active>Casos predefinidos</Tab>
-        <Tab>Crear nuevo paciente</Tab>
-      </div>
 
       <div className="mt-3 flex flex-col gap-2.5">
         {CASES.map((c) => (
@@ -292,32 +282,7 @@ function CenterColumn({
         ))}
       </div>
 
-      <button className="mt-3 flex items-center justify-center gap-1.5 rounded-lg border border-line py-3 text-[0.625rem] text-mid transition-colors hover:border-line-strong hover:text-hi">
-        Ver todos los casos (12)
-        <ChevronRight className="h-[0.75rem] w-[0.75rem]" />
-      </button>
     </section>
-  );
-}
-
-function Tab({
-  children,
-  active,
-}: {
-  children: React.ReactNode;
-  active?: boolean;
-}) {
-  return (
-    <button
-      className={[
-        "border-b-2 py-2.5 text-[0.6875rem] transition-colors",
-        active
-          ? "border-gold text-gold"
-          : "border-transparent text-lo hover:text-mid",
-      ].join(" ")}
-    >
-      {children}
-    </button>
   );
 }
 
@@ -577,15 +542,16 @@ function VitalBox({
 
 function Footer() {
   return (
-    <footer className="flex shrink-0 items-center justify-end gap-2.5 px-5 pt-3 pb-4">
-      <button className="rounded-lg border border-line-strong px-7 py-2.5 text-[0.6875rem] text-mid transition-colors hover:border-lo hover:text-hi">
-        Cancelar
-      </button>
+    <footer className="flex shrink-0 items-center gap-2.5 px-5 pt-3 pb-4">
+      <span className="mr-auto text-[0.5625rem] text-lo">
+        El paciente empieza estable y se deteriora solo. Tú decides cuándo y
+        cómo intervenir.
+      </span>
       <a
         href="/monitor"
         className="flex items-center gap-2.5 rounded-lg border border-[#d8ae5c] bg-[#c69a45] px-6 py-2.5 text-[0.6875rem] font-medium text-[#14100a] transition-colors hover:bg-[#d3a751]"
       >
-        Siguiente: Configurar escenario
+        Iniciar simulación
         <ArrowRight className="h-[0.85rem] w-[0.85rem]" />
       </a>
     </footer>

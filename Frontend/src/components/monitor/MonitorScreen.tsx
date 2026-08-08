@@ -31,6 +31,7 @@ import { BottomNav, MonitorActions, TopBar } from "@/components/shell/Shell";
 import { BeatingHeart } from "./BeatingHeart";
 import { CausalChain } from "./CausalChain";
 import { DecisionBar } from "./DecisionBar";
+import { FlowGuide, phaseOf } from "./FlowGuide";
 import { EcgStrip } from "./EcgStrip";
 import { Sparkline } from "./Sparkline";
 import { SERIES, TrendChart } from "./TrendChart";
@@ -93,12 +94,18 @@ export function MonitorScreen({
   );
 
   const applied = fromBackend ? backend!.applied : engine.interventionKey;
+  const phase = phaseOf(
+    assess,
+    agents.some((a) => a.state !== "En espera"),
+    applied,
+  );
   const projection = hovered ?? asked;
 
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
       <TopBar assess={assess} />
       <Explainer source={controls?.source ?? null} />
+      <FlowGuide phase={phase} />
 
       <div className="grid min-h-0 flex-1 grid-cols-[17.4rem_minmax(0,1fr)_20.5rem] gap-2.5 px-3 py-2.5">
         <LeftColumn vitals={vitals} history={history} />

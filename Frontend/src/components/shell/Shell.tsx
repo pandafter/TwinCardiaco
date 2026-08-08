@@ -1,10 +1,11 @@
 "use client";
 
+import { useState } from "react";
+import Link from "next/link";
 import { mmss, STATUS_UI, type Assessment, type Vitals } from "@/lib/engine";
 import type { PatientControls } from "@/hooks/usePatientState";
 import {
   AlertTriangle,
-  Gear,
   HeartRate,
   LogoMark,
   NavHistory,
@@ -18,12 +19,12 @@ import {
 export function TopBar({
   assess,
   subtitle = "REAL-TIME CARDIAC DIGITAL TWIN",
-  compact = false,
 }: {
   /** parte del contrato de la cabecera; hoy solo se usa `assess` */
   vitals?: Vitals;
   assess: Assessment;
   subtitle?: string;
+  /** aceptado por compatibilidad con las pantallas que ya lo pasan */
   compact?: boolean;
 }) {
   const ttc = assess.time_to_critical_s;
@@ -36,7 +37,8 @@ export function TopBar({
       data-shot="topbar"
       className="flex shrink-0 items-stretch gap-3 border-b border-line px-3 py-2.5"
     >
-      <div className="flex items-center gap-2.5 pr-3">
+      {/* el logo vuelve al inicio: es lo que todo el mundo intenta hacer */}
+      <Link href="/" className="flex items-center gap-2.5 pr-3 transition-opacity hover:opacity-80">
         <div className="flex h-[2.5rem] w-[2.5rem] items-center justify-center rounded-[0.6rem] border border-line-strong bg-card text-crit">
           <LogoMark className="h-[1.4rem] w-[1.4rem]" />
         </div>
@@ -48,7 +50,7 @@ export function TopBar({
             {subtitle}
           </div>
         </div>
-      </div>
+      </Link>
 
       <Divider />
 
@@ -134,14 +136,7 @@ export function TopBar({
               <Plus className="h-[0.6rem] w-[0.6rem]" />
             </span>
           </div>
-          <button className="rounded-md border border-line-strong px-3 py-1.5 text-[0.5625rem] text-mid transition-colors hover:border-lo hover:text-hi">
-            Invitar
-          </button>
-          {!compact && (
-            <button className="flex h-[1.9rem] w-[1.9rem] items-center justify-center rounded-md border border-line-strong text-lo transition-colors hover:text-mid">
-              <Gear className="h-[0.85rem] w-[0.85rem]" />
-            </button>
-          )}
+          <InviteButton />
         </div>
       </div>
     </header>
@@ -149,6 +144,26 @@ export function TopBar({
 }
 
 const Divider = () => <div className="my-1 w-px shrink-0 bg-line" />;
+
+/**
+ * Copia el enlace de la sesión. Es lo que hace real el multiusuario: dos
+ * personas en la misma URL ven el mismo paciente y los mismos eventos.
+ */
+function InviteButton() {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => {
+        navigator.clipboard?.writeText(window.location.href);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1800);
+      }}
+      className="rounded-md border border-line-strong px-3 py-1.5 text-[0.5625rem] text-mid transition-colors hover:border-lo hover:text-hi"
+    >
+      {copied ? "Enlace copiado" : "Invitar"}
+    </button>
+  );
+}
 
 /* ------------------------------------------------------------ nav inferior */
 
