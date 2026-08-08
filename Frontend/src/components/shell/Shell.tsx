@@ -1,34 +1,35 @@
 "use client";
 
-import { mmss, type Assessment, type Vitals } from "@/lib/engine";
+import { mmss, STATUS_UI, type Assessment, type Vitals } from "@/lib/engine";
+import type { PatientControls } from "@/hooks/usePatientState";
 import {
   AlertTriangle,
-  Bell,
   Gear,
   HeartRate,
   LogoMark,
-  NavAgents,
   NavHistory,
   NavResults,
   NavSimulations,
   Pause,
   Plus,
-  CheckSquare,
 } from "@/components/icons";
 
 /** Cabecera común: identidad, caso, alarma, cuenta atrás y presencia. */
 export function TopBar({
-  vitals,
   assess,
   subtitle = "REAL-TIME CARDIAC DIGITAL TWIN",
   compact = false,
 }: {
-  vitals: Vitals;
+  /** parte del contrato de la cabecera; hoy solo se usa `assess` */
+  vitals?: Vitals;
   assess: Assessment;
   subtitle?: string;
   compact?: boolean;
 }) {
   const ttc = assess.time_to_critical_s;
+  // Antes esta cabecera gritaba en rojo fijo aunque el paciente estuviera
+  // estable. La alarma ahora dice la verdad del estado.
+  const ui = STATUS_UI[assess.status];
 
   return (
     <header
@@ -64,15 +65,22 @@ export function TopBar({
       </div>
 
       <div className="flex flex-1 items-center justify-center">
-        <div className="flex w-[21.5rem] items-center gap-3 rounded-[0.6rem] border border-[rgba(229,72,77,0.35)] bg-[rgba(229,72,77,0.07)] px-4 py-2.5">
-          <AlertTriangle className="h-[1.15rem] w-[1.15rem] shrink-0 text-crit" />
+        <div
+          className="flex w-[21.5rem] items-center gap-3 rounded-[0.6rem] border px-4 py-2.5"
+          style={{ borderColor: ui.border, background: ui.bg }}
+        >
+          <AlertTriangle
+            className="h-[1.15rem] w-[1.15rem] shrink-0"
+            style={{ color: ui.color }}
+          />
           <div>
-            <div className="text-[0.8125rem] font-semibold tracking-[0.02em] text-crit">
+            <div
+              className="text-[0.8125rem] font-semibold tracking-[0.02em]"
+              style={{ color: ui.color }}
+            >
               {assess.label}
             </div>
-            <div className="mt-1 text-[0.5625rem] text-mid">
-              Deterioro en curso. Requiere evaluación e intervención.
-            </div>
+            <div className="mt-1 text-[0.5625rem] text-mid">{ui.note}</div>
           </div>
         </div>
       </div>
@@ -85,11 +93,14 @@ export function TopBar({
           <br />
           HASTA ESTADO CRÍTICO
         </div>
-        <div className="mt-1 font-mono text-[1.6rem] leading-none font-semibold tracking-[0.02em] text-crit tabular-nums">
+        <div
+          className="mt-1 font-mono text-[1.6rem] leading-none font-semibold tracking-[0.02em] tabular-nums"
+          style={{ color: ttc === null ? "var(--text-dim)" : "var(--crit)" }}
+        >
           {ttc === null ? "--:--" : mmss(ttc)}
         </div>
         <div className="mt-1 text-[0.4375rem] tracking-[0.14em] text-dim">
-          min : seg
+          {ttc === null ? "proyección del modelo" : "min : seg · proyección"}
         </div>
       </div>
 
@@ -141,26 +152,29 @@ const Divider = () => <div className="my-1 w-px shrink-0 bg-line" />;
 
 /* ------------------------------------------------------------ nav inferior */
 
+/**
+ * Cuatro entradas, no siete.
+ *
+ * Agentes e Intervenciones eran pantallas aparte y esa dispersión era el
+ * problema: había que navegar para entender una sola historia. Ahora los
+ * agentes y la decisión viven DENTRO del monitor, que es donde ocurre todo.
+ */
 export const NAV_ITEMS = [
   { label: "Paciente", icon: HeartRate, href: "/monitor" },
-  { label: "Agentes", icon: NavAgents, href: "/agents" },
-  { label: "Intervenciones", icon: CheckSquare, href: "/interventions" },
-  { label: "Simulaciones", icon: NavSimulations, href: "#" },
-  { label: "Resultados", icon: NavResults, href: "#" },
-  { label: "Historial", icon: NavHistory, href: "#" },
-  { label: "Configuración", icon: Gear, href: "#" },
+  { label: "Comparar", icon: NavSimulations, href: "/compare" },
+  { label: "Resultado", icon: NavResults, href: "/response" },
+  { label: "Casos", icon: NavHistory, href: "/" },
 ] as const;
 
 export function BottomNav({
   active,
   accent = "var(--crit)",
-  items = 6,
+  items = 4,
   underline = false,
   children,
 }: {
   active: string;
   accent?: string;
-  /** el monitor muestra 6 entradas; el command center añade Configuración */
   items?: number;
   underline?: boolean;
   children?: React.ReactNode;
@@ -201,16 +215,28 @@ export function BottomNav({
   );
 }
 
-export function MonitorActions() {
+export function MonitorActions({
+  controls,
+}: {
+  controls: PatientControls | null;
+}) {
+  // Sin controles (modo captura ?t=&freeze=) los botones no aplican: se
+  // ocultan en vez de fingir.
+  if (!controls) return null;
   return (
     <>
-      <button className="flex items-center gap-2 rounded-lg border border-line-strong px-4 py-2.5 text-[0.625rem] text-mid transition-colors hover:border-lo hover:text-hi">
+      <button
+        onClick={controls.togglePause}
+        className="flex items-center gap-2 rounded-lg border border-line-strong px-4 py-2.5 text-[0.625rem] text-mid transition-colors hover:border-lo hover:text-hi"
+      >
         <Pause className="h-[0.75rem] w-[0.75rem]" />
-        Pausar simulación
+        {controls.paused ? "Reanudar simulación" : "Pausar simulación"}
       </button>
-      <button className="flex items-center gap-2 rounded-lg border border-[rgba(229,72,77,0.45)] bg-[rgba(229,72,77,0.1)] px-4 py-2.5 text-[0.625rem] font-medium text-crit transition-colors hover:bg-[rgba(229,72,77,0.16)]">
-        <Bell className="h-[0.75rem] w-[0.75rem]" />
-        Emergencia
+      <button
+        onClick={controls.reset}
+        className="flex items-center gap-2 rounded-lg border border-[rgba(229,72,77,0.45)] bg-[rgba(229,72,77,0.1)] px-4 py-2.5 text-[0.625rem] font-medium text-crit transition-colors hover:bg-[rgba(229,72,77,0.16)]"
+      >
+        Reiniciar caso
       </button>
     </>
   );

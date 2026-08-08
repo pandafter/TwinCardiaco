@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { caseClock, type Vitals } from "@/lib/engine";
+import type { Branch } from "@/lib/whatif";
 
 export const SERIES = [
   { key: "hr", label: "FC (bpm)", color: "var(--crit)" },
@@ -28,18 +29,27 @@ const TICKS = [180, 100, 70, 0];
 
 export function TrendChart({
   history,
-  /** proyecciones what-if: van punteadas y más tenues, nunca como lo medido */
-  projections,
+  /**
+   * Rama what-if a superponer. Se dibuja PUNTEADA, tenue y rotulada
+   * PROYECTADO, y el eje X reserva espacio a la derecha para el futuro.
+   * Lo simulado no puede parecerse a lo medido: es la regla del proyecto.
+   */
+  projection,
 }: {
   history: Vitals[];
-  projections?: { key: string; color: string; points: [number, number][] }[];
+  projection?: Branch | null;
 }) {
-  const { paths, xTicks, alertX } = useMemo(() => {
-    if (history.length < 2) return { paths: [], xTicks: [], alertX: null };
+  const { paths, xTicks, alertX, nowX, projPaths } = useMemo(() => {
+    if (history.length < 2)
+      return { paths: [], xTicks: [], alertX: null, nowX: null, projPaths: [] };
 
     const t0 = history[0].t;
-    const t1 = history[history.length - 1].t;
-    const span = Math.max(1, t1 - t0);
+    const tNow = history[history.length - 1].t;
+    // con proyección el dominio se extiende al horizonte futuro
+    const tEnd = projection
+      ? tNow + projection.points.length
+      : tNow;
+    const span = Math.max(1, tEnd - t0);
     const x = (t: number) => PAD_L + ((t - t0) / span) * (W - PAD_L - PAD_R);
 
     // una muestra cada ~2 s: 1250 puntos no aportan nada a 1000 px de ancho
@@ -57,7 +67,27 @@ export function TrendChart({
       return { ...s, d };
     });
 
-    // con ventanas cortas hh:mm colapsa en el mismo minuto repetido
+    // solo MAP y lactato en la proyección: son las dos que deciden el caso,
+    // y cuatro líneas punteadas más serían ruido
+    const projPaths = projection
+      ? (
+          [
+            { key: "map", color: "var(--warn)", y: yMain, get: (p: Branch["points"][number]) => p.map },
+            { key: "lactate", color: "var(--violet)", y: yLact, get: (p: Branch["points"][number]) => p.lactate },
+          ] as const
+        ).map((s) => ({
+          key: s.key,
+          color: s.color,
+          d: projection.points
+            .filter((_, i) => i % 3 === 0)
+            .map(
+              (p, i) =>
+                `${i === 0 ? "M" : "L"}${x(tNow + p.t).toFixed(1)} ${s.y(s.get(p)).toFixed(1)}`,
+            )
+            .join(" "),
+        }))
+      : [];
+
     const long = span >= 240;
     const xTicks = Array.from({ length: 6 }, (_, i) => {
       const t = t0 + (span * i) / 5;
@@ -65,12 +95,11 @@ export function TrendChart({
       return { x: x(t), label: long ? c.hhmm : c.hhmmss.slice(3) };
     });
 
-    // banda del tramo crítico, no de toda la inestabilidad
     const critical = history.find((v) => v.map < 60);
     const alertX = critical ? x(critical.t) : null;
 
-    return { paths, xTicks, alertX };
-  }, [history]);
+    return { paths, xTicks, alertX, nowX: x(tNow), projPaths };
+  }, [history, projection]);
 
   return (
     <svg
@@ -78,7 +107,6 @@ export function TrendChart({
       preserveAspectRatio="none"
       className="h-full w-full"
     >
-      {/* rejilla */}
       {TICKS.map((t) => (
         <g key={t}>
           <line
@@ -104,7 +132,7 @@ export function TrendChart({
       ))}
 
       {/* tramo de inestabilidad */}
-      {alertX !== null && (
+      {alertX !== null && !projection && (
         <rect
           x={alertX}
           y={PAD_T}
@@ -113,6 +141,49 @@ export function TrendChart({
           fill="var(--crit)"
           opacity="0.07"
         />
+      )}
+
+      {/* zona de futuro: todo lo que está a la derecha de AHORA es simulado */}
+      {projection && nowX !== null && (
+        <>
+          <rect
+            x={nowX}
+            y={PAD_T}
+            width={W - PAD_R - nowX}
+            height={H - PAD_T - PAD_B}
+            fill="var(--text-hi)"
+            opacity="0.03"
+          />
+          <line
+            x1={nowX}
+            x2={nowX}
+            y1={PAD_T}
+            y2={H - PAD_B}
+            stroke="var(--text-lo)"
+            strokeWidth="1"
+            strokeDasharray="2 3"
+            vectorEffect="non-scaling-stroke"
+          />
+          <text
+            x={nowX + 6}
+            y={PAD_T + 11}
+            fontSize="10"
+            fill="var(--text-lo)"
+            letterSpacing="1.2"
+          >
+            AHORA
+          </text>
+          <text
+            x={W - PAD_R - 6}
+            y={PAD_T + 11}
+            textAnchor="end"
+            fontSize="10"
+            fill="var(--text-dim)"
+            letterSpacing="1.6"
+          >
+            PROYECTADO · {projection.human.toUpperCase()}
+          </text>
+        </>
       )}
 
       {/* series medidas */}
@@ -129,23 +200,20 @@ export function TrendChart({
         />
       ))}
 
-      {/* proyecciones: punteadas, tenues y rotuladas. Nunca como lo medido. */}
-      {projections?.map((p) => (
+      {/* proyección: punteada y tenue. Nunca se confunde con lo medido. */}
+      {projPaths.map((p) => (
         <path
           key={p.key}
-          d={p.points
-            .map(([px, py], i) => `${i === 0 ? "M" : "L"}${px} ${py}`)
-            .join(" ")}
+          d={p.d}
           fill="none"
           stroke={p.color}
-          strokeWidth="1.4"
+          strokeWidth="1.5"
           strokeDasharray="5 4"
-          opacity="0.55"
+          opacity="0.6"
           vectorEffect="non-scaling-stroke"
         />
       ))}
 
-      {/* eje X */}
       {xTicks.map((t, i) => (
         <text
           key={i}

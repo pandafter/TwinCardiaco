@@ -4,8 +4,8 @@ import { setTimeout as sleep } from 'node:timers/promises'
 
 const URL = process.env.SHOT_URL ?? 'http://localhost:3210'
 const OUT = process.env.SHOT_OUT ?? 'design/current.png'
-const W = 1840
-const H = 1230
+const W = Number(process.env.SHOT_W ?? 1840)
+const H = Number(process.env.SHOT_H ?? 1230)
 
 async function isUp() {
   try {

@@ -62,7 +62,7 @@ const SYSTOLE = 0.28; // s, la sístole no se acorta tanto como el ciclo
 const FILL_DEN = 0.445; // s de diástole para llenado completo
 const SVR_BASE = 900;
 const BSA = 1.73;
-const LACTATE_THRESHOLD = 0.85; // perfusión por debajo de la cual se acumula
+const LACTATE_THRESHOLD = 0.75; // perfusión por debajo de la cual se acumula
 const LACTATE_GAIN = 0.5;
 
 const clamp = (v: number, lo: number, hi: number) =>
@@ -81,10 +81,21 @@ function scriptedRhythm(t: number, hr: number): Rhythm {
   return hr > 100 ? "sinus_tach" : "sinus";
 }
 
-/** Ruido determinista: mismo t, mismo valor. Nada de Math.random. */
+/**
+ * Ruido determinista: mismo t, mismo valor. Nada de Math.random.
+ *
+ * Usa un hash entero y no Math.sin: la precisión de las funciones
+ * trigonométricas NO está garantizada bit a bit entre motores JS, y la
+ * diferencia se acumulaba a lo largo del arranque hasta romper la hidratación
+ * (servidor y cliente dibujaban coordenadas distintas en el último decimal).
+ * Con enteros de 32 bits el resultado es idéntico en cualquier plataforma.
+ */
 function noise(t: number, seed: number, amp: number) {
-  const x = Math.sin(t * 12.9898 + seed * 78.233) * 43758.5453;
-  return (x - Math.floor(x) - 0.5) * 2 * amp;
+  let x = (Math.round(t * 1000) ^ Math.imul(seed, 0x9e3779b9)) >>> 0;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) >>> 0;
+  x = Math.imul(x ^ (x >>> 16), 0x45d9f3b) >>> 0;
+  x = (x ^ (x >>> 16)) >>> 0;
+  return (x / 0xffffffff - 0.5) * 2 * amp;
 }
 
 export class Engine {
@@ -95,17 +106,96 @@ export class Engine {
   private mapS = 88;
   private mapSlope = 0;
   private history: Vitals[] = [];
+  private lastCo = 7.4;
 
-  constructor(startAt = 0) {
+  /** Efectos farmacológicos activos, como drug_* en PhysioState del backend. */
+  private drugContractility = 0;
+  private drugSvr = 0;
+  private drugHr = 0;
+  private onset = 0; // s que tarda el fármaco en alcanzar su efecto pleno
+  /** instante de la intervención, null si no se ha aplicado ninguna */
+  interventionAt: number | null = null;
+  interventionKey: string | null = null;
+  private mapAtIntervention = 0;
+  private coAtIntervention = 0;
+  private hrBaseAtIntervention = 0;
+
+  constructor(
+    startAt = 0,
+    intervention?: { at: number; key: string; efficacy?: number },
+  ) {
     const dt = 0.25;
-    for (let i = 0; i < Math.round(startAt / dt); i++) this.step(dt);
+    const steps = Math.round(startAt / dt);
+    for (let i = 0; i < steps; i++) {
+      if (intervention && this.interventionAt === null && this.t >= intervention.at)
+        this.applyIntervention(intervention.key, intervention.efficacy);
+      this.step(dt);
+    }
+  }
+
+  /**
+   * Aplica una intervención. Los coeficientes son los de
+   * Backend/cardiotwin/interventions.py: _inotrope y _vasopressor.
+   *
+   * El inotrópico sube la contractilidad y baja la SVR (vasodilatación
+   * beta-2); el vasopresor hace lo contrario. Esa diferencia es lo que hace
+   * que uno mejore el gasto y el otro solo la presión.
+   */
+  applyIntervention(key: string, efficacy = 1) {
+    this.interventionAt = this.t;
+    this.interventionKey = key;
+    this.mapAtIntervention = this.mapS;
+    this.coAtIntervention = this.lastCo;
+    // El guion representa la progresión natural de la enfermedad. Una vez se
+    // interviene deja de mandar: a partir de aquí el estado lo decide la
+    // fisiología, no el reloj.
+    this.hrBaseAtIntervention = scriptedHr(this.t);
+
+    // `efficacy` escala el efecto: 0 = "¿y si el fármaco no le hace efecto?",
+    // 0.5 = media dosis. Es lo que permite responder preguntas en lenguaje
+    // natural sin salirse del espacio de parámetros del motor.
+    const e = clamp(efficacy, 0, 2);
+
+    if (key === "inotrope") {
+      this.drugContractility += 0.38 * e;
+      this.drugSvr -= 0.22 * e;
+      this.drugHr += 14 * e;
+      this.onset = 45;
+    } else if (key === "vasopressor") {
+      this.drugContractility += 0.12 * e;
+      this.drugSvr += 0.5 * e;
+      this.drugHr += 5 * e;
+      this.onset = 30;
+    } else if (key === "fluid") {
+      this.drugContractility += 0.18 * e;
+      this.onset = 60;
+    }
+  }
+
+  /** 0→1 según el tiempo transcurrido desde la intervención. */
+  private drugRamp() {
+    if (this.interventionAt === null) return 0;
+    if (this.onset <= 0) return 1;
+    return clamp((this.t - this.interventionAt) / this.onset, 0, 1);
   }
 
   step(dt: number): Frame {
     this.t += dt;
     const t = this.t;
 
-    const hrBase = scriptedHr(t);
+    const ramp = this.drugRamp();
+
+    // La taquicardia era compensatoria por gasto bajo: cuando el gasto se
+    // recupera, cede. Se mide sobre el gasto y no sobre la presión, porque un
+    // vasopresor sube la presión sin resolver la causa.
+    const baroRelief =
+      this.interventionAt === null
+        ? 0
+        : clamp((this.lastCo - this.coAtIntervention) * 12, 0, 32);
+
+    const scripted =
+      this.interventionAt === null ? scriptedHr(t) : this.hrBaseAtIntervention;
+    const hrBase = scripted + this.drugHr * ramp - baroRelief;
     const hr = hrBase + noise(t, 1, hrBase * 0.015);
     const rhythm = scriptedRhythm(t, hr);
 
@@ -122,9 +212,24 @@ export class Engine {
     this.contractility += (targetContractility - this.contractility) * dt * 0.4;
 
     // LLENADO ↓ → BOMBEO ↓
-    const sv = SV_MAX * filling * this.contractility;
+    // La SVR es poscarga: en un ventrículo fallido, subirla REDUCE el
+    // volumen sistólico. Es lo que hace que el vasopresor suba la presión
+    // mientras el gasto no mejora (Backend/cardiotwin/interventions.py).
+    const svrEff = this.svr * (1 + this.drugSvr * ramp);
+    const afterload = clamp(1 - (svrEff / SVR_BASE - 1) * 0.3, 0.55, 1.12);
+
+    const svRaw =
+      SV_MAX *
+      filling *
+      this.contractility *
+      (1 + this.drugContractility * ramp) *
+      afterload;
+    // meseta de Frank-Starling: por encima del volumen normal el ventrículo
+    // deja de responder. Solo satura por arriba, no toca el rango basal.
+    const sv = svRaw <= SV_MAX ? svRaw : SV_MAX + (svRaw - SV_MAX) * 0.3;
     const co = (sv * hr) / 1000;
     const ci = co / BSA;
+    this.lastCo = co;
 
     // vasoconstricción compensatoria (barorreflejo, muy simplificado)
     const targetSvr = SVR_BASE * (1 + clamp(75 - this.mapS, 0, 40) * 0.0075);
@@ -132,16 +237,24 @@ export class Engine {
 
     // BOMBEO ↓ → PRESIÓN ↓
     const prevMap = this.mapS;
-    this.mapS = (co * this.svr) / 80 + 4;
+    this.mapS = (co * svrEff) / 80 + 4;
     const map = this.mapS + noise(t, 2, 0.6);
     this.mapSlope += ((this.mapS - prevMap) / dt - this.mapSlope) * dt * 0.15;
 
     // PRESIÓN ↓ → OXÍGENO ↓
-    const perfusion = clamp(this.mapS / 85, 0, 1);
+    // La perfusión tisular depende del FLUJO, no solo de la presión. Con solo
+    // la MAP, un vasopresor "resolvía" la hipoperfusión subiendo el número
+    // sin mover el gasto — que es precisamente el error que el gemelo debe
+    // dejar en evidencia.
+    const perfusion = clamp(
+      (this.mapS / 85) * 0.45 + (co / 7.4) * 0.55,
+      0,
+      1,
+    );
     this.lactate +=
       (perfusion < LACTATE_THRESHOLD
         ? (LACTATE_THRESHOLD - perfusion) * LACTATE_GAIN
-        : -0.06 * this.lactate) * dt;
+        : -0.018 * this.lactate) * dt;
     this.lactate = clamp(this.lactate, 0.5, 18);
 
     const spo2 = 97 - (1 - perfusion) * 24 + noise(t, 3, 0.5);
@@ -226,10 +339,15 @@ export class Engine {
     else if (v.ci > 3.5 && v.svr < 800)
       phenotype = "patrón distributivo (gasto alto con resistencia baja)";
 
+    // Si YA está crítico, el tiempo restante es cero: devolver null aquí
+    // ("no cruza") es el mismo falso negativo que el backend corrigió en
+    // time_to_critical(). El monitor muestra 00:00, no "--:--".
     const time_to_critical_s =
-      status === "unstable" && this.mapSlope < -0.005
-        ? clamp((this.mapS - 50) / -this.mapSlope, 0, 99 * 60)
-        : null;
+      status === "critical"
+        ? 0
+        : status === "unstable" && this.mapSlope < -0.005
+          ? clamp((this.mapS - 50) / -this.mapSlope, 0, 99 * 60)
+          : null;
 
     return {
       status,
@@ -263,12 +381,54 @@ export type Level = "ok" | "warn" | "crit";
 export const LEVEL: Record<string, (v: number) => Level> = {
   hr: (v) => (v > 120 ? "crit" : v > 100 || v < 60 ? "warn" : "ok"),
   sbp: (v) => (v < 90 ? "crit" : v < 100 ? "warn" : "ok"),
-  map: (v) => (v < 65 ? "crit" : v < 70 ? "warn" : "ok"),
+  // mismos cortes que assess(): crítico <60, inestable <70. Antes la UI
+  // pintaba crítico en 65 mientras el estado global decía 60: dos verdades.
+  map: (v) => (v < 60 ? "crit" : v < 70 ? "warn" : "ok"),
   spo2: (v) => (v < 92 ? "crit" : v < 95 ? "warn" : "ok"),
   rr: (v) => (v > 26 ? "crit" : v > 22 ? "warn" : "ok"),
   lactate: (v) => (v > 4 ? "crit" : v > 2 ? "warn" : "ok"),
   temp: (v) => (v < 35.5 || v > 38.3 ? "crit" : v < 36 || v > 37.8 ? "warn" : "ok"),
 };
+
+/**
+ * Presentación única del estado hemodinámico. Antes cada pantalla decidía su
+ * color y casi todas pintaban rojo fijo: un paciente estable salía en alarma.
+ */
+export const STATUS_UI: Record<
+  Status,
+  { label: string; color: string; border: string; bg: string; note: string }
+> = {
+  stable: {
+    label: "ESTABLE",
+    color: "var(--ok)",
+    border: "rgba(63,191,127,0.35)",
+    bg: "rgba(63,191,127,0.07)",
+    note: "Sin criterios de inestabilidad. Monitorización continua.",
+  },
+  unstable: {
+    label: "HEMODINÁMICA INESTABLE",
+    color: "var(--warn)",
+    border: "rgba(224,163,64,0.4)",
+    bg: "rgba(224,163,64,0.07)",
+    note: "Deterioro en curso. Requiere evaluación e intervención.",
+  },
+  critical: {
+    label: "ESTADO CRÍTICO",
+    color: "var(--crit)",
+    border: "rgba(229,72,77,0.4)",
+    bg: "rgba(229,72,77,0.07)",
+    note: "Criterios críticos cumplidos. Intervención inmediata.",
+  },
+};
+
+export function trendUI(trend: Trend) {
+  // "empeorando ↑" era ambiguo: ¿sube qué? La flecha ahora es de rumbo.
+  return trend === "worsening"
+    ? { label: "Empeorando", glyph: "↘", color: "var(--crit)" }
+    : trend === "improving"
+      ? { label: "Mejorando", glyph: "↗", color: "var(--ok)" }
+      : { label: "Sin cambios", glyph: "→", color: "var(--warn)" };
+}
 
 export function rhythmLabel(r: Rhythm) {
   return r === "afib_rvr"
@@ -281,6 +441,48 @@ export function rhythmLabel(r: Rhythm) {
 export function mmss(seconds: number) {
   const s = Math.max(0, Math.round(seconds));
   return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/* --------------------------------------------------------- eventos del caso */
+
+export type CaseEvent = {
+  t: number;
+  strong: string;
+  rest: string;
+  color: string;
+  crit?: boolean;
+};
+
+/**
+ * Eventos derivados de la historia REAL: el primer instante en que cada
+ * variable cruzó su umbral. Antes el feed y la línea de tiempo eran texto
+ * quemado con horas fijas — decían "MAP cayó por debajo de 60" con la MAP
+ * en 88, y eso en una demo es indefendible.
+ */
+export function caseEvents(history: Vitals[]): CaseEvent[] {
+  const out: CaseEvent[] = [];
+  const first = (pred: (v: Vitals) => boolean) => history.find(pred);
+
+  const mk = (
+    v: Vitals | undefined,
+    strong: string,
+    rest: (v: Vitals) => string,
+    color: string,
+    crit = false,
+  ) => {
+    if (v) out.push({ t: v.t, strong, rest: rest(v), color, crit });
+  };
+
+  mk(first((v) => v.hr > 100), "Frecuencia cardiaca", (v) => ` superó 100 bpm (${Math.round(v.hr)})`, "var(--warn)");
+  mk(first((v) => v.rhythm !== "sinus"), "Ritmo", (v) => `: ${rhythmLabel(v.rhythm).toLowerCase()}`, "var(--crit)");
+  mk(first((v) => v.hr > 120), "Taquicardia", () => " sostenida > 120 bpm", "var(--crit)");
+  mk(first((v) => v.map < 70), "MAP", (v) => ` cayó por debajo de 70 mmHg (${Math.round(v.map)})`, "var(--warn)");
+  mk(first((v) => v.lactate > 2), "Lactato", (v) => ` superó 2.0 mmol/L (${v.lactate.toFixed(1)})`, "var(--violet)");
+  mk(first((v) => v.spo2 < 94), "SpO₂", (v) => ` por debajo de 94% (${Math.round(v.spo2)}%)`, "var(--info)");
+  mk(first((v) => v.map < 60), "MAP crítica", (v) => `: ${Math.round(v.map)} mmHg`, "var(--crit)", true);
+  mk(first((v) => v.lactate > 4), "Lactato crítico", (v) => `: ${v.lactate.toFixed(1)} mmol/L`, "var(--crit)", true);
+
+  return out.sort((a, b) => b.t - a.t);
 }
 
 /** Reloj de pared del caso, para los timestamps del feed. */

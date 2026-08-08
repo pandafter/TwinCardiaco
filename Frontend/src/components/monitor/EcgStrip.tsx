@@ -32,8 +32,10 @@ function beatPath(x: number, w: number, amp: number, withP: boolean) {
 
 /** Jitter determinista: los intervalos de la fibrilación son irregulares. */
 function jitter(i: number) {
-  const x = Math.sin(i * 37.719) * 43758.5453;
-  return (x - Math.floor(x) - 0.5) * 2;
+  let x = Math.imul(i + 1, 0x9e3779b9) >>> 0;
+  x = Math.imul(x ^ (x >>> 15), 0x85ebca6b) >>> 0;
+  x = (x ^ (x >>> 13)) >>> 0;
+  return (x / 0xffffffff - 0.5) * 2;
 }
 
 export function EcgStrip({

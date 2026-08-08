@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "shot": "node scripts/shot.mjs"
+    "shot": "node scripts/shot.mjs",
+    "demo": "next build && next start -p 3210"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
