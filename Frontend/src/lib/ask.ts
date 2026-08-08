@@ -82,7 +82,12 @@ const OUT_OF_SCOPE: { words: string[]; what: string }[] = [
   { words: ["cateterismo", "angioplast", "stent", "revasculariz"], what: "la revascularización" },
   { words: ["balon", "balón", "ecmo", "asistencia ventricular"], what: "el soporte circulatorio mecánico" },
   { words: ["intubar", "intubacion", "intubación", "ventilacion", "ventilación"], what: "la ventilación mecánica" },
-  { words: ["desfibril", "cardiovers", "descarga"], what: "la cardioversión" },
+  // "cardiovierto" no comparte raíz con "cardioversión": sin las tres formas,
+  // la pregunta se cuela y recibe el mensaje genérico en vez del honesto.
+  {
+    words: ["desfibril", "cardiovers", "cardiovert", "cardiovier", "descarga"],
+    what: "la cardioversión",
+  },
   { words: ["antibiotic", "antibiót"], what: "los antibióticos" },
   { words: ["transfus", "sangre"], what: "la transfusión" },
 ];
@@ -166,7 +171,10 @@ export function parseQuestion(raw: string): Parsed {
 /** Ejemplos que se muestran bajo la caja, para que se sepa qué se puede pedir. */
 export const EXAMPLE_QUESTIONS = [
   "¿y si le doy volumen y espero 2 minutos?",
-  "¿qué pasa si el medicamento no le hace efecto?",
+  // El ejemplo nombra el fármaco a propósito: "el medicamento" a secas no dice
+  // cuál de los dos es, y el parser responde —con razón— que no lo identifica.
+  // Un ejemplo que se ofrece bajo la caja tiene que funcionar al pulsarlo.
+  "¿qué pasa si la noradrenalina no le hace efecto?",
   "¿y si refuerzo la bomba a media dosis?",
   "¿y si no hago nada?",
 ];
