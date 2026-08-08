@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Sistema de diseño — valores extraídos de design/ref-01-seleccionar-paciente.png
+   Monitor de UCI: fondo casi negro con tinte frío, dorado como acento y acción.
+--------------------------------------------------------------------------- */
+:root {
+  /* superficies */
+  --bg-page: #05070a;
+  --bg-shell: #080b0f;
+  --bg-panel: #0a0e13;
+  --bg-card: #0b0f14;
+  --bg-card-hover: #0e1319;
+  --bg-card-active: #12161c;
+
+  /* bordes */
+  --line: #1b222a;
+  --line-strong: #242c36;
+  --line-gold: #9b7530;
+
+  /* texto */
+  --text-hi: #e9eef3;
+  --text-mid: #838d98;
+  --text-lo: #67717d;
+  --text-dim: #515b66;
+
+  /* acento */
+  --gold: #c89b48;
+  --gold-dim: #8c6a28;
+  --gold-soft: rgba(200, 155, 72, 0.1);
+
+  /* semánticos */
+  --ok: #3fbf7f;
+  --warn: #e0a340;
+  --crit: #e5484d;
+  --heart: #e03b4a;
+}
+
+@theme inline {
+  --color-page: var(--bg-page);
+  --color-shell: var(--bg-shell);
+  --color-panel: var(--bg-panel);
+  --color-card: var(--bg-card);
+  --color-card-hi: var(--bg-card-active);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-line-gold: var(--line-gold);
+  --color-hi: var(--text-hi);
+  --color-mid: var(--text-mid);
+  --color-lo: var(--text-lo);
+  --color-dim: var(--text-dim);
+  --color-gold: var(--gold);
+  --color-gold-dim: var(--gold-dim);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-crit: var(--crit);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* La demo corre a 1840×1230. Diseñamos contra la referencia de 1280 de ancho
+   y escalamos todo con la raíz, así rem y spacing de Tailwind escalan solos. */
+html {
+  font-size: clamp(11px, calc(100vw / 1280 * 16), 26px);
+}
+
+body {
+  background: var(--bg-page);
+  color: var(--text-hi);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(200, 155, 72, 0.25);
+}
