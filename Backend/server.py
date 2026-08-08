@@ -187,7 +187,11 @@ async def portal_token(req: TokenReq):
     if "error" in tok:
         raise HTTPException(502, tok["error"])
     return {
-        "token": tok,
+        # `tok` ES {token, expiresAt}: devolverlo tal cual le dejaba al front
+        # un token.token que no es un JWT, y el canal se queda en "blocked"
+        # sin decir por que.
+        "token": tok["token"],
+        "expires_at": tok.get("expiresAt"),
         "realtime_host": PortalSync.REALTIME_HOST,
         "channels": {
             "vitals": ctx["portal"].channel("vitals"),
