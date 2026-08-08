@@ -52,6 +52,7 @@ export function EcgStrip({
   // regenerar en cada tick haría saltar el trazado: se cuantiza el HR
   const hrQ = Math.round(hr / 5) * 5;
   const irregular = rhythm === "afib_rvr";
+  const flat = rhythm === "asystole";
 
   const { d, width, seconds } = useMemo(() => {
     const beats = 14;
@@ -68,6 +69,30 @@ export function EcgStrip({
     }
     return { d: path, width: x, seconds: total };
   }, [hrQ, irregular, amplitude]);
+
+  // Asistolia: la línea plana. No hay nada que trazar y el silencio del
+  // monitor dice más que cualquier número de la pantalla.
+  if (flat)
+    return (
+      <div className={`relative overflow-hidden ${className ?? ""}`}>
+        <svg
+          viewBox={`0 0 400 ${H}`}
+          preserveAspectRatio="none"
+          className="h-full w-full"
+        >
+          <line
+            x1="0"
+            x2="400"
+            y1={BASE}
+            y2={BASE}
+            stroke="var(--crit)"
+            strokeWidth="1.6"
+            vectorEffect="non-scaling-stroke"
+            opacity="0.55"
+          />
+        </svg>
+      </div>
+    );
 
   return (
     <div className={`relative overflow-hidden ${className ?? ""}`}>

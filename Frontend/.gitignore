@@ -40,3 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 design/.chrome-profile
+
+# el ejemplo SÍ se commitea: documenta qué variable hace falta
+!.env.local.example

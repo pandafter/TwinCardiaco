@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { EXAMPLE_QUESTIONS, parseQuestion } from "@/lib/ask";
+import { EXAMPLE_QUESTIONS } from "@/lib/ask";
+import { ask as askAI } from "@/lib/ai/bridge";
+import type { Assessment, Vitals } from "@/lib/engine";
 import { projectBranch, type Branch, type BranchKey } from "@/lib/whatif";
 
 /**
@@ -32,41 +34,72 @@ const ease = [0.22, 1, 0.36, 1] as const;
 export function DecisionBar({
   branches,
   decisionAt,
+  vitals,
+  assess,
   onHover,
   onApply,
   onAsk,
   applied,
+  arrested,
 }: {
   branches: Branch[];
   decisionAt: number;
+  vitals: Vitals;
+  assess: Assessment;
   onHover: (b: Branch | null) => void;
   onApply: (key: BranchKey) => void;
   onAsk: (b: Branch | null) => void;
-  applied: string | null;
+  applied: string[];
+  arrested: boolean;
 }) {
   const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
   const [answer, setAnswer] = useState<
-    | { ok: true; echo: string; branch: Branch }
-    | { ok: false; reason: string }
+    | { ok: true; echo: string; reading: string; source: string; branch: Branch }
+    | { ok: false; reason: string; reading: string; source: string }
     | null
   >(null);
 
-  const ask = (text: string) => {
-    if (!text.trim()) return;
-    const parsed = parseQuestion(text);
-    if (!parsed.supported) {
-      setAnswer({ ok: false, reason: parsed.reason });
-      onAsk(null);
-      return;
+  /**
+   * Preguntar es lo único que no cabe en cuatro botones.
+   *
+   * El modelo hace DOS cosas: lee el estado del paciente en este instante y
+   * lo explica (`reading`), y traduce la pregunta a parámetros del motor. La
+   * fisiología la calcula el motor, siempre. Si la IA no responde, se cae a
+   * las reglas locales y la caja lo dice — no se finge que hubo modelo.
+   */
+  const ask = async (text: string) => {
+    if (!text.trim() || busy) return;
+    setBusy(true);
+    try {
+      const res = await askAI(text, vitals, assess, applied);
+      if (!res.supported) {
+        setAnswer({
+          ok: false,
+          reason: res.reason,
+          reading: res.reading,
+          source: res.source,
+        });
+        onAsk(null);
+        return;
+      }
+      const none = branches.find((b) => b.key === "none");
+      const branch = projectBranch(decisionAt, res.intervention, {
+        efficacy: res.efficacy,
+        delay: res.delay_s,
+        baseline: none?.deltas,
+      });
+      setAnswer({
+        ok: true,
+        echo: res.echo,
+        reading: res.reading,
+        source: res.source,
+        branch,
+      });
+      onAsk(branch);
+    } finally {
+      setBusy(false);
     }
-    const none = branches.find((b) => b.key === "none");
-    const branch = projectBranch(decisionAt, parsed.intervention, {
-      efficacy: parsed.efficacy,
-      delay: parsed.delay,
-      baseline: none?.deltas,
-    });
-    setAnswer({ ok: true, echo: parsed.echo, branch });
-    onAsk(branch);
   };
 
   return (
@@ -74,9 +107,16 @@ export function DecisionBar({
       <div className="flex items-baseline gap-3 px-0.5">
         <h2 className="text-micro tracking-[0.16em] text-mid">¿QUÉ HACEMOS?</h2>
         <span className="text-micro text-lo">
-          Pasa el mouse para ver a dónde lleva cada opción · haz clic para
-          aplicarla
+          {arrested
+            ? "El corazón se detuvo. Ningún fármaco circula sin bomba."
+            : "Pasa el mouse para ver a dónde lleva cada opción · puedes intervenir las veces que haga falta"}
         </span>
+        {applied.length > 0 && !arrested && (
+          <span className="ml-auto text-micro text-lo">
+            {applied.length} {applied.length === 1 ? "decisión" : "decisiones"}{" "}
+            tomadas
+          </span>
+        )}
       </div>
 
       <div className="grid grid-cols-4 gap-2.5" role="group">
@@ -86,6 +126,7 @@ export function DecisionBar({
             branch={b}
             index={i}
             applied={applied}
+            arrested={arrested}
             onHover={onHover}
             onApply={onApply}
           />
@@ -111,15 +152,28 @@ export function DecisionBar({
           />
           <motion.button
             onClick={() => ask(q)}
+            disabled={busy}
             whileTap={{ scale: 0.96 }}
-            className="shrink-0 rounded-lg border px-4 py-2 text-label font-medium transition-colors"
+            className="relative shrink-0 overflow-hidden rounded-lg border px-4 py-2 text-label font-medium transition-colors disabled:cursor-wait"
             style={{
               borderColor: "var(--line-gold)",
               background: "var(--gold-soft)",
               color: "var(--gold)",
             }}
           >
-            Simular
+            {/* mientras el modelo piensa, una luz recorre el botón: la espera
+                se ve, en vez de parecer que no pasó nada */}
+            {busy && (
+              <span
+                className="pointer-events-none absolute inset-y-0 w-1/3"
+                style={{
+                  background:
+                    "linear-gradient(90deg, transparent, var(--gold-soft), transparent)",
+                  animation: "sweep 1.1s ease-in-out infinite",
+                }}
+              />
+            )}
+            <span className="relative">{busy ? "Pensando…" : "Simular"}</span>
           </motion.button>
         </div>
 
@@ -167,6 +221,34 @@ export function DecisionBar({
                   : "color-mix(in srgb, var(--warn) 7%, var(--bg-panel))",
               }}
             >
+              {/* De dónde salió la respuesta. Igual que la etiqueta
+                  servidor/local de la cabecera: la fuente se declara. */}
+              <div className="mb-1.5 flex items-center gap-2">
+                <span
+                  className="rounded border px-1.5 py-[0.1rem] text-micro"
+                  style={
+                    answer.source === "llm"
+                      ? { borderColor: "var(--line-gold)", color: "var(--gold)" }
+                      : {
+                          borderColor: "var(--line-strong)",
+                          color: "var(--text-lo)",
+                        }
+                  }
+                  title={
+                    answer.source === "llm"
+                      ? "Respondió el modelo leyendo el estado actual del paciente"
+                      : "El modelo no respondió: esto salió de las reglas locales"
+                  }
+                >
+                  {answer.source === "llm" ? "IA" : "reglas locales"}
+                </span>
+                {answer.reading && (
+                  <span className="min-w-0 flex-1 text-label leading-[1.5] text-hi">
+                    {answer.reading}
+                  </span>
+                )}
+              </div>
+
               {answer.ok ? (
                 <>
                   <div className="flex items-baseline gap-2">
@@ -237,31 +319,36 @@ function OptionCard({
   branch: b,
   index,
   applied,
+  arrested,
   onHover,
   onApply,
 }: {
   branch: Branch;
   index: number;
-  applied: string | null;
+  applied: string[];
+  arrested: boolean;
   onHover: (b: Branch | null) => void;
   onApply: (key: BranchKey) => void;
 }) {
-  const isApplied = applied === b.key;
-  const muted = !!applied && !isApplied;
+  // Cuántas veces se ha dado ya. Se puede volver a dar: el objetivo es
+  // poder equivocarse y corregir, no acertar a la primera.
+  const times = applied.filter((k) => k === b.key).length;
+  const isApplied = times > 0;
 
   return (
     <motion.button
       initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: muted ? 0.35 : 1, y: 0 }}
+      animate={{ opacity: arrested ? 0.3 : 1, y: 0 }}
       transition={{ delay: index * 0.05, duration: 0.4, ease }}
-      whileHover={muted ? undefined : { y: -3 }}
-      whileTap={muted ? undefined : { scale: 0.985 }}
+      whileHover={arrested ? undefined : { y: -3 }}
+      whileTap={arrested ? undefined : { scale: 0.985 }}
       onMouseEnter={() => onHover(b)}
       onMouseLeave={() => onHover(null)}
       onFocus={() => onHover(b)}
       onBlur={() => onHover(null)}
       onClick={() => onApply(b.key)}
-      disabled={!!applied}
+      // En asistolia los fármacos no hacen nada. Es lo único que bloquea.
+      disabled={arrested}
       aria-pressed={isApplied}
       className="group relative flex flex-col items-start overflow-hidden rounded-[0.7rem] border px-3.5 py-2.5 text-left transition-colors disabled:cursor-not-allowed"
       style={{
@@ -301,7 +388,7 @@ function OptionCard({
               color: b.color,
             }}
           >
-            aplicada
+            {times > 1 ? `×${times}` : "aplicada"}
           </span>
         )}
       </div>

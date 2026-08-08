@@ -173,6 +173,9 @@ export function toAssessment(
     instability_criteria: last?.to === "unstable" ? (last?.criteria ?? []) : [],
     hemodynamic_phenotype: last?.phenotype ?? null,
     time_to_critical_s: last?.time_to_critical_s ?? null,
+    // El backend todavía no lo emite. Se deja en null y la UI lo oculta, en
+    // vez de derivarlo aquí: el front no calcula fisiología.
+    time_to_arrest_s: null,
     // vienen del servidor o no se muestran: el front no los deriva
     deterioration_risk: b.deterioration_risk ?? 0,
     trend: b.trend ?? "steady",

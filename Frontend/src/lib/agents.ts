@@ -95,6 +95,37 @@ export function runAgents(
   branches: Branch[],
 ): AgentOutput[] {
   const meta = (id: AgentId) => AGENT_META.find((m) => m.id === id)!;
+
+  // En asistolia no hay nada que deliberar. Las plantillas seguían hablando
+  // de "el corazón va a 0 por minuto y se llena al 100%", que es exactamente
+  // el tipo de frase que delata que detrás no hay nadie pensando.
+  if (a.status === "arrest") {
+    const dead = (id: AgentId, headline: string, technical: string) => ({
+      ...meta(id),
+      state: "Sin decisión",
+      headline,
+      technical,
+      evidence: [],
+    });
+    return [
+      dead(
+        "cardiologia",
+        "El corazón dejó de contraerse. Ya no hay músculo que proteger.",
+        "Asistolia. Sin actividad mecánica ni eléctrica organizada.",
+      ),
+      dead(
+        "fisiologia",
+        "No llega sangre a ningún tejido. El lactato es el registro de lo que pasó, no algo que todavía se pueda corregir.",
+        "Flujo cero. DO₂ cero.",
+      ),
+      dead(
+        "orchestrator",
+        "No hay decisión que tomar con estas cuatro intervenciones. Ninguna revierte un paro: eso serían compresiones, adrenalina y desfibrilación, y este gemelo no las simula.",
+        "Fuera del alcance del modelo. Reconocerlo es parte de ser honesto sobre qué simula esto.",
+      ),
+    ];
+  }
+
   const idle = a.status === "stable";
 
   const none = branches.find((b) => b.key === "none");
@@ -255,6 +286,83 @@ export function agentsFromBackend(
       })),
     } satisfies AgentOutput;
   });
+}
+
+/**
+ * Los mismos tres agentes, pero con lo que dijo el MODELO.
+ *
+ * Cada especialista corrió con su propio system prompt y su propia vista
+ * filtrada del estado (`/api/agents`), así que el desacuerdo nace de que
+ * miran cosas distintas. Aquí solo se pinta lo que dijeron: el front no
+ * genera opiniones, y las cifras de la evidencia siguen saliendo del motor.
+ */
+export function agentsFromLlm(
+  live: {
+    cardio: { headline: string; technical: string; stance: string };
+    fisio: { headline: string; technical: string; stance: string };
+    orq: { conflict: boolean; headline: string; tiebreak_rule: string };
+  },
+  v: Vitals,
+  a: Assessment,
+  branches: Branch[],
+): AgentOutput[] {
+  const meta = (id: AgentId) => AGENT_META.find((m) => m.id === id)!;
+  const fillPct = Math.round(a.filling_pct * 100);
+
+  return [
+    {
+      ...meta("cardiologia"),
+      state: live.cardio.stance,
+      headline: live.cardio.headline,
+      technical: live.cardio.technical,
+      evidence: [
+        { label: "Pulso", value: `${Math.round(v.hr)} lpm`, source: "medido" },
+        { label: "Llenado", value: `${fillPct}%`, source: "medido" },
+        {
+          label: "Presiones de llenado",
+          value: `${v.pcwp.toFixed(0)} mmHg`,
+          source: "medido",
+        },
+      ],
+    },
+    {
+      ...meta("fisiologia"),
+      state: live.fisio.stance,
+      headline: live.fisio.headline,
+      technical: live.fisio.technical,
+      evidence: [
+        {
+          label: "Sangre bombeada",
+          value: `${v.co.toFixed(1)} L/min`,
+          source: "medido",
+        },
+        {
+          label: "Oxígeno en tejidos",
+          value: `${Math.round(v.perfusion_index * 100)}%`,
+          source: "medido",
+        },
+        {
+          label: "Lactato",
+          value: `${v.lactate.toFixed(1)} mmol/L`,
+          source: "medido",
+        },
+      ],
+    },
+    {
+      ...meta("orchestrator"),
+      state: live.orq.conflict ? "Conflicto" : "Con hallazgo",
+      headline: live.orq.headline,
+      technical: live.orq.tiebreak_rule,
+      evidence: branches
+        .filter((b) => b.key !== "none")
+        .slice(0, 3)
+        .map((b) => ({
+          label: b.human,
+          value: `presión ${b.vsNone.map >= 0 ? "+" : ""}${b.vsNone.map.toFixed(0)}`,
+          source: "simulado" as const,
+        })),
+    },
+  ];
 }
 
 type BackendOpinionLike = {

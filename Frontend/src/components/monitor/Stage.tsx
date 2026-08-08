@@ -50,6 +50,7 @@ export function Stage({
   assess,
   history,
   agents,
+  agentsSource,
   branches,
   projection,
   applied,
@@ -61,6 +62,7 @@ export function Stage({
   assess: Assessment;
   history: Vitals[];
   agents: AgentOutput[];
+  agentsSource: AgentsSource;
   branches: Branch[];
   projection: Branch | null;
   applied: string | null;
@@ -155,7 +157,7 @@ export function Stage({
 
           {scene === "agents" && (
             <motion.div key="agents" {...fade} className="absolute inset-0">
-              <AgentsScene agents={agents} />
+              <AgentsScene agents={agents} source={agentsSource} />
             </motion.div>
           )}
 
@@ -238,12 +240,27 @@ function BodyScene({
 
 /* ------------------------------------------------------ escena: los agentes */
 
-function AgentsScene({ agents }: { agents: AgentOutput[] }) {
+export type AgentsSource = "llm" | "pending" | "local";
+
+function AgentsScene({
+  agents,
+  source,
+}: {
+  agents: AgentOutput[];
+  source: AgentsSource;
+}) {
   return (
     <div className="flex h-full w-full flex-col">
       <SceneTitle
         title="LA IA ESTÁ ANALIZANDO"
-        hint="Dos especialistas leen los mismos números y defienden cosas distintas."
+        hint={
+          source === "llm"
+            ? "Tres agentes con objetivos distintos leyeron este paciente. El desacuerdo es real."
+            : source === "pending"
+              ? "Consultando a los tres agentes…"
+              : "Sin modelo disponible: reglas locales. Los números siguen siendo del motor."
+        }
+        badge={source}
       />
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 p-4">
         {agents.map((a, i) => (
@@ -513,10 +530,13 @@ function SceneTitle({
   title,
   hint,
   accent,
+  badge,
 }: {
   title: string;
   hint: string;
   accent?: string;
+  /** de dónde salió lo que se está mostrando; se declara, no se supone */
+  badge?: AgentsSource;
 }) {
   return (
     <div className="flex shrink-0 items-baseline gap-3 border-b border-line px-4 py-2.5">
@@ -539,6 +559,22 @@ function SceneTitle({
       >
         {hint}
       </motion.p>
+      {badge && (
+        <span
+          className="shrink-0 rounded border px-1.5 py-[0.1rem] text-micro"
+          style={
+            badge === "llm"
+              ? { borderColor: "var(--line-gold)", color: "var(--gold)" }
+              : { borderColor: "var(--line-strong)", color: "var(--text-lo)" }
+          }
+        >
+          {badge === "llm"
+            ? "modelo"
+            : badge === "pending"
+              ? "consultando…"
+              : "reglas locales"}
+        </span>
+      )}
     </div>
   );
 }

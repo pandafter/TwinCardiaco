@@ -13,8 +13,8 @@
  *   PULSO ↑ → LLENADO ↓ → BOMBEO ↓ → PRESIÓN ↓ → OXÍGENO ↓
  */
 
-export type Rhythm = "sinus" | "sinus_tach" | "afib_rvr";
-export type Status = "stable" | "unstable" | "critical";
+export type Rhythm = "sinus" | "sinus_tach" | "afib_rvr" | "asystole";
+export type Status = "stable" | "unstable" | "critical" | "arrest";
 export type Trend = "worsening" | "steady" | "improving";
 
 /** Espejo de PhysioState.vitals() del backend. */
@@ -49,6 +49,8 @@ export type Assessment = {
   hemodynamic_phenotype: string | null;
   /** Trayectoria del MODELO sin intervenir. No es predicción clínica. */
   time_to_critical_s: number | null;
+  /** Segundos hasta la asistolia según la pendiente actual del daño. */
+  time_to_arrest_s: number | null;
   deterioration_risk: number;
   trend: Trend;
   /** 0–1, qué tanto alcanza a llenarse el ventrículo entre latidos */
@@ -64,6 +66,14 @@ const SVR_BASE = 900;
 const BSA = 1.73;
 const LACTATE_THRESHOLD = 0.75; // perfusión por debajo de la cual se acumula
 const LACTATE_GAIN = 0.5;
+/**
+ * Perfusión por debajo de la cual la propia bomba empieza a dañarse.
+ * Plausible, no medido: como todo lo demás aquí, es un motor de escenarios.
+ */
+const ARREST_FLOOR = 0.45;
+/** Se rompe rápido y se repara despacio: llegar tarde tiene que costar algo. */
+const ARREST_GAIN = 0.065;
+const ARREST_REPAIR = 0.012;
 
 const clamp = (v: number, lo: number, hi: number) =>
   Math.min(hi, Math.max(lo, v));
@@ -113,9 +123,30 @@ export class Engine {
   private drugSvr = 0;
   private drugHr = 0;
   private onset = 0; // s que tarda el fármaco en alcanzar su efecto pleno
-  /** instante de la intervención, null si no se ha aplicado ninguna */
+  /** instante de la ÚLTIMA intervención, null si no se ha aplicado ninguna */
   interventionAt: number | null = null;
+  /** la última aplicada; se conserva por compatibilidad con la UI */
   interventionKey: string | null = null;
+  /**
+   * TODAS las aplicadas, en orden.
+   *
+   * Antes solo cabía una y la barra de decisión se deshabilitaba después del
+   * primer clic: eso no es un simulador, es una encuesta. Poder equivocarse y
+   * rescatar es lo único que hace que haya algo que aprender aquí.
+   */
+  interventionLog: string[] = [];
+
+  /**
+   * Daño acumulado por hipoperfusión, 0→1. Cuando llega a 1 el corazón para.
+   *
+   * Sin un estado terminal el paciente se deterioraba asintóticamente para
+   * siempre y no había nada en juego. El corazón se irriga a sí mismo: si la
+   * perfusión cae lo suficiente y se sostiene, la bomba acaba parando.
+   */
+  private arrestLoad = 0;
+  private arrestSlope = 0;
+  /** true cuando el corazón se ha detenido. No hay vuelta atrás en el modelo. */
+  arrested = false;
   private mapAtIntervention = 0;
   private coAtIntervention = 0;
   private hrBaseAtIntervention = 0;
@@ -142,8 +173,13 @@ export class Engine {
    * que uno mejore el gasto y el otro solo la presión.
    */
   applyIntervention(key: string, efficacy = 1) {
+    // En asistolia los fármacos no hacen nada: sin bomba no hay circulación
+    // que los reparta. Aceptarlos en silencio sería mentir.
+    if (this.arrested) return;
+
     this.interventionAt = this.t;
     this.interventionKey = key;
+    if (key !== "none") this.interventionLog.push(key);
     this.mapAtIntervention = this.mapS;
     this.coAtIntervention = this.lastCo;
     // El guion representa la progresión natural de la enfermedad. Una vez se
@@ -182,6 +218,10 @@ export class Engine {
   step(dt: number): Frame {
     this.t += dt;
     const t = this.t;
+
+    // Asistolia: no hay nada que calcular. Todo a cero, y el ECG plano lo
+    // dice antes que cualquier número.
+    if (this.arrested) return this.arrestFrame();
 
     const ramp = this.drugRamp();
 
@@ -257,6 +297,24 @@ export class Engine {
         : -0.018 * this.lactate) * dt;
     this.lactate = clamp(this.lactate, 0.5, 18);
 
+    // El corazón se irriga a sí mismo. Por debajo del umbral, la bomba se va
+    // dañando; por encima se repara, pero mucho más despacio de lo que se
+    // rompe — que es como funciona el daño isquémico y es lo que hace que
+    // llegar tarde importe aunque después se acierte con el fármaco.
+    const prevLoad = this.arrestLoad;
+    this.arrestLoad = clamp(
+      this.arrestLoad +
+        (perfusion < ARREST_FLOOR
+          ? (ARREST_FLOOR - perfusion) * ARREST_GAIN
+          : -(perfusion - ARREST_FLOOR) * ARREST_REPAIR) *
+          dt,
+      0,
+      1,
+    );
+    this.arrestSlope +=
+      ((this.arrestLoad - prevLoad) / dt - this.arrestSlope) * dt * 0.3;
+    if (this.arrestLoad >= 1) this.arrested = true;
+
     const spo2 = 97 - (1 - perfusion) * 24 + noise(t, 3, 0.5);
     const rr = 14 + (1 - perfusion) * 30 + noise(t, 4, 0.6);
     const temp = 36.9 - (1 - perfusion) * 0.6 + noise(t, 5, 0.05);
@@ -297,6 +355,49 @@ export class Engine {
     if (this.history.length > 1250) this.history.shift(); // 5 min a 4 Hz
 
     return { vitals, assess: this.assess(vitals, filling) };
+  }
+
+  /** El paciente en paro. Sin bomba no hay flujo, ni presión, ni oxígeno. */
+  private arrestFrame(): Frame {
+    const vitals: Vitals = {
+      t: Math.round(this.t * 10) / 10,
+      hr: 0,
+      sbp: 0,
+      dbp: 0,
+      map: 0,
+      spo2: 0,
+      rr: 0,
+      lactate: 18,
+      co: 0,
+      ci: 0,
+      sv: 0,
+      cvp: 0,
+      pcwp: 0,
+      svr: this.svr,
+      do2: 0,
+      o2er: 0,
+      rhythm: "asystole",
+      perfusion_index: 0,
+      temp: 35,
+    };
+    this.history.push(vitals);
+    if (this.history.length > 1250) this.history.shift();
+
+    return {
+      vitals,
+      assess: {
+        status: "arrest",
+        label: "PARO CARDÍACO",
+        critical_criteria: ["Asistolia: sin actividad mecánica"],
+        instability_criteria: [],
+        hemodynamic_phenotype: null,
+        time_to_critical_s: 0,
+        time_to_arrest_s: 0,
+        deterioration_risk: 100,
+        trend: "worsening",
+        filling_pct: 0,
+      },
+    };
   }
 
   /** Mismos umbrales que Backend/cardiotwin/interventions.py: assess_state(). */
@@ -356,6 +457,13 @@ export class Engine {
       instability_criteria: unstable,
       hemodynamic_phenotype: phenotype,
       time_to_critical_s,
+      // El reloj que de verdad importa: cuánto falta para que deje de latir.
+      // Extrapolación lineal del daño acumulado, igual de honesta (y de
+      // limitada) que time_to_critical_s.
+      time_to_arrest_s:
+        this.arrestSlope > 0.0004
+          ? clamp((1 - this.arrestLoad) / this.arrestSlope, 0, 99 * 60)
+          : null,
       deterioration_risk: Math.round(
         clamp((1 - v.perfusion_index) * 170 + (v.lactate - 1) * 7, 0, 99),
       ),
@@ -419,6 +527,13 @@ export const STATUS_UI: Record<
     bg: "rgba(229,72,77,0.07)",
     note: "Criterios críticos cumplidos. Intervención inmediata.",
   },
+  arrest: {
+    label: "PARO CARDÍACO",
+    color: "var(--crit)",
+    border: "rgba(229,72,77,0.75)",
+    bg: "rgba(229,72,77,0.18)",
+    note: "El corazón dejó de bombear. Ninguna de estas cuatro intervenciones lo revierte.",
+  },
 };
 
 export function trendUI(trend: Trend) {
@@ -431,11 +546,13 @@ export function trendUI(trend: Trend) {
 }
 
 export function rhythmLabel(r: Rhythm) {
-  return r === "afib_rvr"
-    ? "Fibrilación auricular con RVR"
-    : r === "sinus_tach"
-      ? "Taquicardia sinusal"
-      : "Ritmo sinusal";
+  return r === "asystole"
+    ? "Asistolia — sin actividad"
+    : r === "afib_rvr"
+      ? "Fibrilación auricular con RVR"
+      : r === "sinus_tach"
+        ? "Taquicardia sinusal"
+        : "Ritmo sinusal";
 }
 
 export function mmss(seconds: number) {

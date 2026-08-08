@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import Link from "next/link";
 import { usePatientState } from "@/hooks/usePatientState";
@@ -13,7 +13,8 @@ import {
   type Level,
   type Vitals,
 } from "@/lib/engine";
-import { agentsFromBackend, runAgents } from "@/lib/agents";
+import { agentsFromBackend, agentsFromLlm, runAgents } from "@/lib/agents";
+import { deliberate, type LiveAgents } from "@/lib/ai/bridge";
 import { projectAll, type Branch, type BranchKey } from "@/lib/whatif";
 import {
   Droplet,
@@ -71,7 +72,19 @@ export function MonitorScreen({
   const branches = useMemo(() => projectAll(bucket), [bucket]);
 
   const fromBackend = controls?.source === "backend" && !!backend;
-  const agents = useMemo(
+
+  /**
+   * Los tres agentes, del modelo real.
+   *
+   * Se pide UNA vez por hito del caso, no en cada tick: tres llamadas a un
+   * LLM cada 250 ms sería absurdo y además la opinión no cambia entre
+   * latidos. Los hitos son el paso a inestable, el paso a crítico y cada
+   * intervención aplicada. Mientras la respuesta llega, y si nunca llega, se
+   * muestran los agentes locales — y la pantalla dice cuál está viendo.
+   */
+  const [llmAgents, setLlmAgents] = useState<LiveAgents | null>(null);
+  const [llmBusy, setLlmBusy] = useState(false);
+  const localAgents = useMemo(
     () =>
       fromBackend
         ? agentsFromBackend(backend!.agents, backend!.consensus)
@@ -79,11 +92,45 @@ export function MonitorScreen({
     [fromBackend, backend, vitals, assess, branches],
   );
 
-  const applied = fromBackend ? backend!.applied : engine.interventionKey;
+  // TODAS las aplicadas, no la última. Poder intervenir varias veces es lo
+  // que separa un simulador de una encuesta de una sola pregunta.
+  const applied = fromBackend
+    ? backend!.applied
+      ? [backend!.applied]
+      : []
+    : engine.interventionLog;
+  const arrested = assess.status === "arrest";
+
+  // El hito: cambia con el estado o con cada decisión tomada.
+  const milestone = `${assess.status}:${applied.length}`;
+
+  useEffect(() => {
+    if (frozen || assess.status === "stable") return;
+    let alive = true;
+    setLlmBusy(true);
+    deliberate(vitals, assess, branches, applied)
+      .then((r) => {
+        if (alive && r) setLlmAgents(r);
+      })
+      .finally(() => alive && setLlmBusy(false));
+    return () => {
+      alive = false;
+    };
+    // deliberadamente solo el hito: ver el comentario de arriba
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [milestone, frozen]);
+
+  const agents = useMemo(
+    () =>
+      llmAgents
+        ? agentsFromLlm(llmAgents, vitals, assess, branches)
+        : localAgents,
+    [llmAgents, vitals, assess, branches, localAgents],
+  );
   const phase = phaseOf(
     assess,
     agents.some((a) => a.state !== "En espera"),
-    applied,
+    applied.length ? applied[applied.length - 1] : null,
   );
   const projection = hovered ?? asked;
 
@@ -104,9 +151,10 @@ export function MonitorScreen({
           assess={assess}
           history={history}
           agents={agents}
+          agentsSource={llmAgents ? "llm" : llmBusy ? "pending" : "local"}
           branches={branches}
           projection={projection}
-          applied={applied}
+          applied={applied.length ? applied[applied.length - 1] : null}
           pinned={pinned}
           onPin={setPinned}
         />
@@ -119,10 +167,13 @@ export function MonitorScreen({
         // desde el tiempo exacto se comparaban dos instantes distintos y
         // "¿y si no hago nada?" devolvía +2.5 mmHg contra sí mismo.
         decisionAt={bucket}
+        vitals={vitals}
+        assess={assess}
         onHover={setHovered}
         onAsk={setAsked}
         onApply={(k: BranchKey) => controls?.apply(k)}
         applied={applied}
+        arrested={arrested}
       />
     </div>
   );
@@ -147,8 +198,18 @@ function TopBar({
   controls: ReturnType<typeof usePatientState>["controls"];
 }) {
   const ui = STATUS_UI[assess.status];
+  /**
+   * Dos relojes, y solo se muestra el que importa.
+   *
+   * "Tiempo hasta estado crítico" es un umbral administrativo; "tiempo hasta
+   * que el corazón deje de latir" es lo que de verdad está en juego. En
+   * cuanto el segundo existe, desplaza al primero.
+   */
+  const tta = assess.time_to_arrest_s;
   const ttc = assess.time_to_critical_s;
-  const urgent = ttc !== null && ttc < 120;
+  const clock = tta !== null ? tta : ttc;
+  const isArrestClock = tta !== null;
+  const urgent = clock !== null && clock < 120;
 
   return (
     <header className="relative flex shrink-0 items-center gap-4 border-b border-line px-4 py-2.5">
@@ -206,8 +267,17 @@ function TopBar({
 
       {/* el reloj: cuando queda poco, es lo más grande de la pantalla */}
       <div className="flex flex-col items-end">
-        <span className="text-micro tracking-[0.12em] text-dim">
-          {ttc === null ? "SIN DETERIORO PROYECTADO" : "TIEMPO HASTA ESTADO CRÍTICO"}
+        <span
+          className="text-micro tracking-[0.12em]"
+          style={{ color: isArrestClock ? "var(--crit)" : "var(--text-dim)" }}
+        >
+          {assess.status === "arrest"
+            ? "EL CORAZÓN SE DETUVO"
+            : isArrestClock
+              ? "HASTA QUE EL CORAZÓN DEJE DE LATIR"
+              : clock === null
+                ? "SIN DETERIORO PROYECTADO"
+                : "TIEMPO HASTA ESTADO CRÍTICO"}
         </span>
         <motion.span
           animate={urgent ? { opacity: [1, 0.5, 1] } : { opacity: 1 }}
@@ -217,15 +287,21 @@ function TopBar({
           className="num font-mono text-num leading-none font-semibold"
           style={{
             color:
-              ttc === null
+              clock === null
                 ? "var(--text-dim)"
-                : assess.status === "critical"
+                : isArrestClock || assess.status === "critical"
                   ? "var(--crit)"
                   : "var(--warn)",
           }}
         >
           {/* llegado a cero el contador ya no cuenta nada: lo dice */}
-          {ttc === null ? "--:--" : ttc <= 0 ? "AHORA" : mmss(ttc)}
+          {assess.status === "arrest"
+            ? "ASISTOLIA"
+            : clock === null
+              ? "--:--"
+              : clock <= 0
+                ? "AHORA"
+                : mmss(clock)}
         </motion.span>
       </div>
 
