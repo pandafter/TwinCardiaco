@@ -259,20 +259,48 @@ class PortalSync:
         except Exception as e:                        # noqa: BLE001
             self._note_failure(f"{type(e).__name__}")
 
+    def grants(self) -> Dict[str, List[str]]:
+        """
+        La ACL que se graba en el JWT del usuario.
+
+        Se deriva de SERVER_ONLY / CLIENT_WRITABLE a proposito: la particion
+        de canales se declara UNA vez. Si alguien mueve "actions" de sitio,
+        los permisos lo siguen solos en vez de quedar desincronizados, que
+        es como se abre un agujero sin enterarse.
+        """
+        acl = {self.channel(k): ["connect"] for k in self.SERVER_ONLY}
+        acl.update({self.channel(k): ["connect", "publish"]
+                    for k in self.CLIENT_WRITABLE})
+        return acl
+
     async def mint_user_token(self, user_id: str,
-                              display_name: str = "") -> Optional[dict]:
+                              display_name: str = "",
+                              ttl: str = "1h") -> Optional[dict]:
         """
         Acuña el JWT que el browser usa contra realtime.useportal.co.
         Esta llamada usa la secret key, asi que SOLO puede vivir aqui:
         el browser nunca ve sk_.
+
+        Sin el mapa `channels` los permisos quedan a merced de los defaults
+        de Portal, y un cliente podria acabar con publish en el canal de
+        vitales. Con el, un cliente que solo tiene "connect" en vitals no
+        puede publicar ahi aunque lo intente: el paciente no se falsifica
+        desde el navegador.
         """
         if not self.enabled:
             return None
         try:
             async with self.session.post(
                 self.API_HOST + self.TOKEN_PATH,
-                headers={"Authorization": f"Bearer {self.secret_key}"},
-                json={"userId": user_id, "displayName": display_name},
+                headers={"Authorization": f"Bearer {self.secret_key}",
+                         "Content-Type": "application/json"},
+                # displayName no es un campo del contrato: el nombre visible
+                # viaja en `claims`, que es la bolsa opaca que Portal expone
+                # a authz en portal.config.ts.
+                json={"userId": user_id,
+                      "channels": self.grants(),
+                      "claims": {"username": display_name or user_id},
+                      "ttl": ttl},
                 timeout=5,
             ) as r:
                 if r.status >= 400:
