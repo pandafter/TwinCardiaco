@@ -306,3 +306,9 @@ export const NavHistory = ({ className }: P) => (
     <path d="M12 7v5.2l3.4 2" />
   </svg>
 );
+
+export const Message = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M20.5 12.4a7.6 7.6 0 0 1-8.2 7.6c-.9 0-1.7-.1-2.5-.4L4.5 21l1.5-4.6a7.4 7.4 0 0 1-1-3.8 7.6 7.6 0 0 1 7.7-7.6 7.6 7.6 0 0 1 7.8 7.4Z" />
+  </svg>
+);

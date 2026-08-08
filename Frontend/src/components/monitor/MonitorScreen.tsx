@@ -4,7 +4,6 @@ import { usePatientState } from "@/hooks/usePatientState";
 import {
   LEVEL,
   caseClock,
-  mmss,
   rhythmLabel,
   type Level,
   type Vitals,
@@ -15,26 +14,17 @@ import {
   AgentPharma,
   AgentPhysio,
   AgentSim,
-  AlertTriangle,
-  Bell,
   ChevronDown,
   ChevronRight,
   Droplet,
   Flask,
   Gauge,
   HeartRate,
-  LogoMark,
   Lungs,
-  NavAgents,
-  NavHistory,
-  NavResults,
-  NavSimulations,
-  Pause,
-  Plus,
   Pressure,
   Thermometer,
-  CheckSquare,
 } from "@/components/icons";
+import { BottomNav, MonitorActions, TopBar } from "@/components/shell/Shell";
 import { BeatingHeart } from "./BeatingHeart";
 import { EcgStrip } from "./EcgStrip";
 import { Sparkline } from "./Sparkline";
@@ -64,15 +54,6 @@ const AGENTS = [
   { name: "Orchestrator", state: "Coordinando", icon: AgentOrchestrator, color: "var(--gold)", note: "Integrando hallazgos de agentes y actualizando consenso.", at: 34 },
 ] as const;
 
-const NAV = [
-  { label: "Paciente", icon: HeartRate },
-  { label: "Agentes", icon: NavAgents },
-  { label: "Intervenciones", icon: CheckSquare },
-  { label: "Simulaciones", icon: NavSimulations },
-  { label: "Resultados", icon: NavResults },
-  { label: "Historial", icon: NavHistory },
-] as const;
-
 export function MonitorScreen({
   startAt = 0,
   frozen = false,
@@ -86,128 +67,18 @@ export function MonitorScreen({
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
       <TopBar vitals={vitals} assess={assess} />
 
-      <div className="grid min-h-0 flex-1 grid-cols-[17.4rem_1fr_20.5rem] gap-2.5 px-3 py-2.5">
+      <div className="grid min-h-0 flex-1 grid-cols-[17.4rem_minmax(0,1fr)_20.5rem] gap-2.5 px-3 py-2.5">
         <LeftColumn vitals={vitals} history={history} />
         <CenterColumn vitals={vitals} assess={assess} history={history} />
         <RightColumn vitals={vitals} />
       </div>
 
-      <BottomNav />
+      <BottomNav active="Paciente">
+        <MonitorActions />
+      </BottomNav>
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ topbar */
-
-function TopBar({
-  vitals,
-  assess,
-}: {
-  vitals: Vitals;
-  assess: ReturnType<typeof usePatientState>["assess"];
-}) {
-  const ttc = assess.time_to_critical_s;
-
-  return (
-    <header className="flex shrink-0 items-stretch gap-3 border-b border-line px-3 py-2.5">
-      <div className="flex items-center gap-2.5 pr-3">
-        <div className="flex h-[2.5rem] w-[2.5rem] items-center justify-center rounded-[0.6rem] border border-line-strong bg-card text-crit">
-          <LogoMark className="h-[1.4rem] w-[1.4rem]" />
-        </div>
-        <div className="leading-none">
-          <div className="text-[1.05rem] font-semibold tracking-[0.06em] text-hi">
-            CARDIAC <span className="font-light text-mid">TWIN</span>
-          </div>
-          <div className="mt-1.5 text-[0.4375rem] tracking-[0.2em] text-dim">
-            REAL-TIME CARDIAC DIGITAL TWIN
-          </div>
-        </div>
-      </div>
-
-      <Divider />
-
-      <div className="flex flex-col justify-center px-1">
-        <div className="text-[0.4375rem] tracking-[0.18em] text-dim">
-          CASO ACTUAL
-        </div>
-        <div className="mt-1.5 text-[0.75rem] text-hi">
-          Insuficiencia cardíaca descompensada
-        </div>
-        <div className="mt-1 text-[0.5625rem] text-lo">
-          Paciente ID: CT-4782 · Masculino 67 años
-        </div>
-      </div>
-
-      <div className="flex flex-1 items-center justify-center">
-        <div className="flex w-[21.5rem] items-center gap-3 rounded-[0.6rem] border border-[rgba(229,72,77,0.35)] bg-[rgba(229,72,77,0.07)] px-4 py-2.5">
-          <AlertTriangle className="h-[1.15rem] w-[1.15rem] shrink-0 text-crit" />
-          <div>
-            <div className="text-[0.8125rem] font-semibold tracking-[0.02em] text-crit">
-              {assess.label}
-            </div>
-            <div className="mt-1 text-[0.5625rem] text-mid">
-              Deterioro en curso. Requiere evaluación e intervención.
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <Divider />
-
-      <div className="flex flex-col items-center justify-center px-2">
-        <div className="text-center text-[0.4375rem] leading-[1.5] tracking-[0.16em] text-dim">
-          TIEMPO ESTIMADO
-          <br />
-          HASTA ESTADO CRÍTICO
-        </div>
-        <div className="mt-1 font-mono text-[1.6rem] leading-none font-semibold tracking-[0.02em] text-crit tabular-nums">
-          {ttc === null ? "--:--" : mmss(ttc)}
-        </div>
-        <div className="mt-1 text-[0.4375rem] tracking-[0.14em] text-dim">
-          min : seg
-        </div>
-      </div>
-
-      <Divider />
-
-      <div className="flex flex-col justify-center gap-1.5 pl-1">
-        <div className="text-[0.4375rem] tracking-[0.18em] text-dim">
-          COLABORACIÓN EN VIVO
-        </div>
-        <div className="text-[0.625rem] text-ok">3 conectados</div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center">
-            {[
-              { i: "L", c: "var(--info)" },
-              { i: "R", c: "var(--crit)" },
-              { i: "A", c: "var(--ok)" },
-            ].map((a, n) => (
-              <span
-                key={a.i}
-                className="flex h-[1.35rem] w-[1.35rem] items-center justify-center rounded-full border border-shell text-[0.5rem] font-medium"
-                style={{
-                  marginLeft: n ? "-0.3rem" : 0,
-                  background: `color-mix(in srgb, ${a.c} 22%, transparent)`,
-                  color: a.c,
-                }}
-              >
-                {a.i}
-              </span>
-            ))}
-            <span className="ml-[-0.3rem] flex h-[1.35rem] w-[1.35rem] items-center justify-center rounded-full border border-line-strong bg-card text-lo">
-              <Plus className="h-[0.6rem] w-[0.6rem]" />
-            </span>
-          </div>
-          <button className="rounded-md border border-line-strong px-3 py-1.5 text-[0.5625rem] text-mid transition-colors hover:border-lo hover:text-hi">
-            Invitar
-          </button>
-        </div>
-      </div>
-    </header>
-  );
-}
-
-const Divider = () => <div className="my-1 w-px shrink-0 bg-line" />;
 
 /* ------------------------------------------------------------ columna izq */
 
@@ -450,7 +321,7 @@ function CenterColumn({
             },
           ].map((c) => (
             <div
-              key={c.t}
+              key={c.e}
               className={`rounded-md border px-2.5 py-1.5 ${
                 c.crit
                   ? "border-[rgba(229,72,77,0.4)] bg-[rgba(229,72,77,0.06)]"
@@ -692,45 +563,6 @@ function RightColumn({ vitals }: { vitals: Vitals }) {
         </div>
       </Card>
     </div>
-  );
-}
-
-/* ------------------------------------------------------------ nav inferior */
-
-function BottomNav() {
-  return (
-    <nav className="flex shrink-0 items-center justify-between border-t border-line px-3 py-2">
-      <div className="flex items-center gap-1">
-        {NAV.map((n, i) => {
-          const Icon = n.icon;
-          const active = i === 0;
-          return (
-            <button
-              key={n.label}
-              className={`flex w-[5.2rem] flex-col items-center gap-1.5 rounded-lg px-2 py-2 transition-colors ${
-                active
-                  ? "bg-[rgba(229,72,77,0.08)] text-crit"
-                  : "text-lo hover:text-mid"
-              }`}
-            >
-              <Icon className="h-[1.05rem] w-[1.05rem]" />
-              <span className="text-[0.5rem]">{n.label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="flex items-center gap-2.5">
-        <button className="flex items-center gap-2 rounded-lg border border-line-strong px-4 py-2.5 text-[0.625rem] text-mid transition-colors hover:border-lo hover:text-hi">
-          <Pause className="h-[0.75rem] w-[0.75rem]" />
-          Pausar simulación
-        </button>
-        <button className="flex items-center gap-2 rounded-lg border border-[rgba(229,72,77,0.45)] bg-[rgba(229,72,77,0.1)] px-4 py-2.5 text-[0.625rem] font-medium text-crit transition-colors hover:bg-[rgba(229,72,77,0.16)]">
-          <Bell className="h-[0.75rem] w-[0.75rem]" />
-          Emergencia
-        </button>
-      </div>
-    </nav>
   );
 }
 

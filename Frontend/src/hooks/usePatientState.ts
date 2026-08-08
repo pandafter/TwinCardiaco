@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Engine, type Frame, type Vitals } from "@/lib/engine";
 
 /**
@@ -17,12 +17,20 @@ export function usePatientState({
   frozen?: boolean;
   hz?: number;
 } = {}) {
-  const engineRef = useRef<Engine | null>(null);
-  if (engineRef.current === null) engineRef.current = new Engine(startAt);
-  const engine = engineRef.current;
+  // El motor es mutable: cada step() avanza el reloj. Si se instancia en el
+  // cuerpo del render, el doble render de StrictMode lo adelanta dos veces y
+  // servidor y cliente dibujan estados distintos (mismatch de hidratación).
+  // Creándolo dentro del initializer, cada invocación es independiente y
+  // determinista, así que el primer frame siempre es el mismo.
+  const [init] = useState(() => {
+    const engine = new Engine(startAt);
+    const frame = engine.step(0.25);
+    return { engine, frame, history: [...engine.getHistory()] };
+  });
+  const engine = init.engine;
 
-  const [frame, setFrame] = useState<Frame>(() => engine.step(0.25));
-  const [history, setHistory] = useState<Vitals[]>(() => [...engine.getHistory()]);
+  const [frame, setFrame] = useState<Frame>(init.frame);
+  const [history, setHistory] = useState<Vitals[]>(init.history);
 
   useEffect(() => {
     if (frozen) return;
