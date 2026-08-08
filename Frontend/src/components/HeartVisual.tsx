@@ -3,11 +3,11 @@
 import { useId } from "react";
 
 /** Masa ventricular: ancha arriba, ápex abajo-derecha. Más alta que ancha. */
-const BODY =
+export const BODY =
   "M58 84 C42 100 40 130 52 156 C64 182 86 204 102 214 C110 219 118 215 123 206 C141 180 154 148 156 116 C158 90 144 72 122 68 C98 64 74 70 58 84 Z";
 
 /** Aurículas y orejuela, fusionadas con el cuerpo. */
-const ATRIA: [number, number, number, number, number][] = [
+export const ATRIA: [number, number, number, number, number][] = [
   // cx, cy, rx, ry, rot
   [64, 86, 22, 20, -12],
   [134, 80, 20, 18, 10],
@@ -15,7 +15,7 @@ const ATRIA: [number, number, number, number, number][] = [
 ];
 
 /** Grandes vasos: aorta, tronco pulmonar, cava, ramas. */
-const VESSELS: [string, number][] = [
+export const VESSELS: [string, number][] = [
   ["M102 68 C98 40 106 18 124 14 C143 10 154 26 149 44", 9],
   ["M84 68 C77 46 63 32 46 36", 7.5],
   ["M124 64 C130 44 142 32 158 34", 6],
@@ -25,7 +25,7 @@ const VESSELS: [string, number][] = [
 ];
 
 /** Surco interventricular + coronarias. */
-const CORONARIES = [
+export const CORONARIES = [
   "M100 74 C106 108 99 150 93 182 C90 196 91 204 95 212",
   "M66 96 C88 110 118 110 142 96",
   "M92 122 C108 134 128 136 146 126",

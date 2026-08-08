@@ -581,10 +581,13 @@ function Footer() {
       <button className="rounded-lg border border-line-strong px-7 py-2.5 text-[0.6875rem] text-mid transition-colors hover:border-lo hover:text-hi">
         Cancelar
       </button>
-      <button className="flex items-center gap-2.5 rounded-lg border border-[#d8ae5c] bg-[#c69a45] px-6 py-2.5 text-[0.6875rem] font-medium text-[#14100a] transition-colors hover:bg-[#d3a751]">
+      <a
+        href="/monitor"
+        className="flex items-center gap-2.5 rounded-lg border border-[#d8ae5c] bg-[#c69a45] px-6 py-2.5 text-[0.6875rem] font-medium text-[#14100a] transition-colors hover:bg-[#d3a751]"
+      >
         Siguiente: Configurar escenario
         <ArrowRight className="h-[0.85rem] w-[0.85rem]" />
-      </button>
+      </a>
     </footer>
   );
 }

@@ -1,4 +1,4 @@
-type P = { className?: string };
+type P = { className?: string; style?: React.CSSProperties };
 
 const base = {
   viewBox: "0 0 24 24",
@@ -184,5 +184,125 @@ export const Bars = ({ className }: P) => (
     <rect x="7.6" y="10" width="3.6" height="12" rx="1" />
     <rect x="13.2" y="6" width="3.6" height="16" rx="1" />
     <rect x="18.8" y="2" width="3.6" height="20" rx="1" />
+  </svg>
+);
+
+/* ------------------------------------------------------------- monitor */
+
+export const AlertTriangle = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M10.3 4.3 2.6 17.5c-.7 1.2.2 2.7 1.7 2.7h15.4c1.5 0 2.4-1.5 1.7-2.7L13.7 4.3a2 2 0 0 0-3.4 0Z" />
+    <path d="M12 9.5v4.2M12 17.2h.01" />
+  </svg>
+);
+
+export const Pause = ({ className }: P) => (
+  <svg className={className} viewBox="0 0 24 24" fill="currentColor">
+    <rect x="6.5" y="4.5" width="3.6" height="15" rx="1.2" />
+    <rect x="13.9" y="4.5" width="3.6" height="15" rx="1.2" />
+  </svg>
+);
+
+export const Bell = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M18 8.6a6 6 0 1 0-12 0c0 5-2 6.4-2 6.4h16s-2-1.4-2-6.4Z" />
+    <path d="M13.7 19a2 2 0 0 1-3.4 0" />
+  </svg>
+);
+
+export const Plus = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M12 5.5v13M5.5 12h13" />
+  </svg>
+);
+
+export const ChevronDown = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="m5.5 9 6.5 6.5L18.5 9" />
+  </svg>
+);
+
+export const Thermometer = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M13.5 14.2V5.4a1.9 1.9 0 1 0-3.8 0v8.8a3.6 3.6 0 1 0 3.8 0Z" />
+  </svg>
+);
+
+/* --- agentes --- */
+
+export const AgentCardio = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M20.4 9.4A4.3 4.3 0 0 0 12 7.7a4.3 4.3 0 0 0-8.4 1.7c0 4.3 5.3 7.4 8.4 10 3.1-2.6 8.4-5.7 8.4-10Z" />
+    <path d="M4.2 11.8h2.9l1.3-2.2 1.8 4.4 1.5-3h2" />
+  </svg>
+);
+
+export const AgentPharma = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <rect
+      x="3"
+      y="8.4"
+      width="18"
+      height="7.2"
+      rx="3.6"
+      transform="rotate(-45 12 12)"
+    />
+    <path d="M9.4 9.4 14.6 14.6" />
+  </svg>
+);
+
+export const AgentPhysio = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <circle cx="12" cy="5.2" r="2.4" />
+    <circle cx="5.6" cy="17.6" r="2.4" />
+    <circle cx="18.4" cy="17.6" r="2.4" />
+    <path d="M12 7.6v4.2M10.2 12.6 7 15.6M13.8 12.6 17 15.6" />
+  </svg>
+);
+
+export const AgentSim = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M12 3.2 20 7.4v9.2L12 20.8 4 16.6V7.4Z" />
+    <path d="M4 7.4 12 11.6l8-4.2M12 11.6v9.2" />
+  </svg>
+);
+
+export const AgentOrchestrator = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <rect x="3.4" y="3.4" width="7" height="7" rx="2" />
+    <rect x="13.6" y="3.4" width="7" height="7" rx="2" />
+    <rect x="3.4" y="13.6" width="7" height="7" rx="2" />
+    <rect x="13.6" y="13.6" width="7" height="7" rx="2" />
+  </svg>
+);
+
+/* --- nav inferior --- */
+
+export const NavAgents = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <circle cx="12" cy="7.6" r="3.4" />
+    <path d="M5 20v-1.2A5 5 0 0 1 10 14h4a5 5 0 0 1 5 4.8V20" />
+  </svg>
+);
+
+export const NavSimulations = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <circle cx="12" cy="12" r="2.4" />
+    <ellipse cx="12" cy="12" rx="9.2" ry="4.2" />
+    <ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(60 12 12)" />
+    <ellipse cx="12" cy="12" rx="9.2" ry="4.2" transform="rotate(120 12 12)" />
+  </svg>
+);
+
+export const NavResults = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <path d="M7 3.6h10a2 2 0 0 1 2 2v14.8l-7-3.4-7 3.4V5.6a2 2 0 0 1 2-2Z" />
+  </svg>
+);
+
+export const NavHistory = ({ className }: P) => (
+  <svg {...base} className={className}>
+    <circle cx="12" cy="12" r="8.6" />
+    <path d="M12 7v5.2l3.4 2" />
   </svg>
 );

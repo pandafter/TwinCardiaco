@@ -33,6 +33,10 @@ const browser = await puppeteer.launch({
 const page = await browser.newPage()
 await page.goto(URL, { waitUntil: 'networkidle0' })
 await page.evaluate(() => document.fonts.ready)
+// el overlay de dev de Next se cuela en la captura
+await page.addStyleTag({
+  content: 'nextjs-portal,[data-nextjs-toast]{display:none!important}',
+})
 await sleep(800)
 
 await page.screenshot({ path: OUT })
