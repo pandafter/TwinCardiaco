@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { usePatientState } from "@/hooks/usePatientState";
 import {
   LEVEL,
@@ -13,14 +13,12 @@ import {
   type Level,
   type Vitals,
 } from "@/lib/engine";
-import { AGENT_META, agentFindings } from "@/lib/agents";
+import { runAgents, type AgentOutput } from "@/lib/agents";
+import { projectAll, type Branch, type BranchKey } from "@/lib/whatif";
 import {
   AgentCardio,
   AgentOrchestrator,
-  AgentPharma,
-  AgentPhysio,
   AgentSim,
-  ChevronRight,
   Droplet,
   Flask,
   Gauge,
@@ -32,6 +30,7 @@ import {
 import { BottomNav, MonitorActions, TopBar } from "@/components/shell/Shell";
 import { BeatingHeart } from "./BeatingHeart";
 import { CausalChain } from "./CausalChain";
+import { DecisionBar } from "./DecisionBar";
 import { EcgStrip } from "./EcgStrip";
 import { Sparkline } from "./Sparkline";
 import { SERIES, TrendChart } from "./TrendChart";
@@ -42,53 +41,25 @@ const TONE: Record<Level, string> = {
   crit: "text-crit",
 };
 
+/**
+ * Cada vital lleva su nombre en lenguaje normal. El jurado no es médico: si
+ * tiene que aprender qué es la MAP, la pantalla ya falló.
+ */
 const VITAL_ROWS = [
-  { key: "hr", label: "Frecuencia cardíaca", unit: "bpm", icon: HeartRate, color: "var(--crit)", min: 40, max: 180, digits: 0 },
-  { key: "bp", label: "Presión arterial", unit: "mmHg", icon: Pressure, color: "var(--crit)", min: 40, max: 120, digits: 0 },
-  { key: "map", label: "MAP (Presión arterial media)", unit: "mmHg", icon: Gauge, color: "var(--crit)", min: 40, max: 100, digits: 0 },
-  { key: "spo2", label: "SpO₂", unit: "%", icon: Droplet, color: "var(--info)", min: 70, max: 100, digits: 0 },
-  { key: "rr", label: "Frecuencia respiratoria", unit: "rpm", icon: Lungs, color: "var(--warn)", min: 8, max: 40, digits: 0 },
-  { key: "lactate", label: "Lactato", unit: "mmol/L", icon: Flask, color: "var(--violet)", min: 0, max: 10, digits: 1 },
-  { key: "temp", label: "Temperatura", unit: "°C", icon: Thermometer, color: "var(--ok)", min: 35, max: 39, digits: 1 },
+  { key: "hr", label: "Pulso", tech: "frecuencia cardíaca", unit: "bpm", icon: HeartRate, color: "var(--crit)", min: 40, max: 180, digits: 0 },
+  { key: "bp", label: "Presión arterial", tech: "sistólica / diastólica", unit: "mmHg", icon: Pressure, color: "var(--crit)", min: 40, max: 120, digits: 0 },
+  { key: "map", label: "Presión de bombeo", tech: "MAP", unit: "mmHg", icon: Gauge, color: "var(--crit)", min: 40, max: 100, digits: 0 },
+  { key: "spo2", label: "Oxígeno en sangre", tech: "SpO₂", unit: "%", icon: Droplet, color: "var(--info)", min: 70, max: 100, digits: 0 },
+  { key: "rr", label: "Respiraciones", tech: "frecuencia respiratoria", unit: "rpm", icon: Lungs, color: "var(--warn)", min: 8, max: 40, digits: 0 },
+  { key: "lactate", label: "Falta de oxígeno en tejidos", tech: "lactato", unit: "mmol/L", icon: Flask, color: "var(--violet)", min: 0, max: 10, digits: 1 },
+  { key: "temp", label: "Temperatura", tech: "central", unit: "°C", icon: Thermometer, color: "var(--ok)", min: 35, max: 39, digits: 1 },
 ] as const;
 
 const AGENT_ICON = {
-  cardiology: AgentCardio,
-  pharmacology: AgentPharma,
-  physiology: AgentPhysio,
+  clinical: AgentCardio,
   simulation: AgentSim,
   orchestrator: AgentOrchestrator,
 } as const;
-
-/**
- * Tarjetas de agente derivadas del estado REAL del motor. Antes eran cinco
- * strings quemados que citaban valores que el paciente no tenía. Cuando el
- * backend esté conectado, esto lo reemplazan los eventos `agent.opinion`.
- */
-function liveAgents(vitals: Vitals, assess: Assessment) {
-  const idle = assess.status === "stable";
-  const f = agentFindings(vitals, assess);
-
-  return AGENT_META.map((m) => {
-    if (idle)
-      return {
-        ...m,
-        state: "En espera",
-        note: "Monitorizando. Sin hallazgos que reportar.",
-      };
-    const note =
-      m.id === "cardiology"
-        ? `${f.cardiology.finding} FC ${Math.round(vitals.hr)} bpm, MAP ${Math.round(vitals.map)} mmHg.`
-        : m.id === "pharmacology"
-          ? f.pharmacology.finding
-          : m.id === "physiology"
-            ? f.physiology.finding
-            : m.id === "simulation"
-              ? "Ejecutando escenarios de intervención y proyectando trayectorias."
-              : f.orchestrator.synthesis;
-    return { ...m, note };
-  });
-}
 
 export function MonitorScreen({
   startAt = 0,
@@ -99,25 +70,81 @@ export function MonitorScreen({
   frozen?: boolean;
   live?: boolean;
 }) {
-  const { vitals, assess, history, controls } = usePatientState({
+  const { vitals, assess, history, controls, engine } = usePatientState({
     startAt,
     frozen,
     live,
   });
 
+  const [hovered, setHovered] = useState<Branch | null>(null);
+  const [asked, setAsked] = useState<Branch | null>(null);
+
+  // Las ramas se precalculan y se refrescan cada ~10 s de simulación: cuando
+  // el usuario pasa el mouse, la trayectoria ya existe y aparece al instante.
+  const bucket = Math.floor(vitals.t / 10) * 10;
+  const branches = useMemo(() => projectAll(bucket), [bucket]);
+
+  const agents = useMemo(
+    () => runAgents(vitals, assess, branches),
+    [vitals, assess, branches],
+  );
+
+  const applied = engine.interventionKey;
+  const projection = hovered ?? asked;
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
-      <TopBar vitals={vitals} assess={assess} />
+      <TopBar assess={assess} />
+      <Explainer />
 
       <div className="grid min-h-0 flex-1 grid-cols-[17.4rem_minmax(0,1fr)_20.5rem] gap-2.5 px-3 py-2.5">
         <LeftColumn vitals={vitals} history={history} />
-        <CenterColumn vitals={vitals} assess={assess} history={history} />
-        <RightColumn vitals={vitals} assess={assess} history={history} />
+        <CenterColumn
+          vitals={vitals}
+          assess={assess}
+          history={history}
+          projection={projection}
+        />
+        <RightColumn agents={agents} history={history} />
       </div>
+
+      <DecisionBar
+        branches={branches}
+        decisionAt={vitals.t}
+        onHover={setHovered}
+        onAsk={setAsked}
+        onApply={(k: BranchKey) => controls?.apply(k)}
+        applied={applied}
+      />
 
       <BottomNav active="Paciente">
         <MonitorActions controls={controls} />
       </BottomNav>
+    </div>
+  );
+}
+
+/**
+ * Una franja que dice qué es esto. Sin ella, alguien que abre la pantalla ve
+ * números moviéndose y no sabe qué está mirando ni por qué debería importarle.
+ */
+function Explainer() {
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-b border-line bg-[rgba(56,189,248,0.04)] px-4 py-1.5">
+      <span className="rounded border border-[rgba(56,189,248,0.3)] px-2 py-[0.1rem] text-[0.4375rem] tracking-[0.14em] text-cyan">
+        SIMULADOR
+      </span>
+      <span className="text-[0.5625rem] text-mid">
+        Paciente virtual con un corazón que está fallando como bomba.{" "}
+        <span className="text-hi">
+          Todo lo que ves se calcula en vivo
+        </span>
+        : prueba una decisión y mira cómo cambia su futuro.
+      </span>
+      <span className="ml-auto text-[0.4375rem] text-dim">
+        Prototipo de investigación y educación · datos sintéticos · no es una
+        herramienta clínica
+      </span>
     </div>
   );
 }
@@ -197,7 +224,6 @@ function VitalRow({
     ? `${Math.round(vitals.sbp)}/${Math.round(vitals.dbp)}`
     : raw.toFixed(row.digits);
 
-  // flecha de tendencia real por vital, no un "↑" fijo en la FC
   const trendDelta =
     series.length > 6 ? series[series.length - 1] - series[series.length - 6] : 0;
   const trendGlyph =
@@ -213,6 +239,7 @@ function VitalRow({
         <Icon className="h-[0.95rem] w-[0.95rem]" />
       </span>
       <div className="min-w-0 flex-1">
+        {/* nombre humano arriba, término clínico debajo */}
         <div className="truncate text-[0.5625rem] text-mid">{row.label}</div>
         <div className="mt-0.5 flex items-baseline gap-1">
           <span
@@ -227,6 +254,7 @@ function VitalRow({
             </span>
           )}
         </div>
+        <div className="truncate text-[0.4375rem] text-dim">{row.tech}</div>
       </div>
       <div className="flex shrink-0 items-center gap-1">
         <Sparkline
@@ -234,10 +262,10 @@ function VitalRow({
           min={sMin}
           max={sMax}
           color={row.color}
-          width={78}
-          height={30}
+          width={70}
+          height={28}
         />
-        <div className="flex h-[30px] w-[1.4rem] flex-col justify-between text-[0.4375rem] text-dim">
+        <div className="flex h-[28px] w-[1.4rem] flex-col justify-between text-[0.4375rem] text-dim">
           <span>{sMax.toFixed(row.digits)}</span>
           <span>{sMin.toFixed(row.digits)}</span>
         </div>
@@ -252,294 +280,118 @@ function CenterColumn({
   vitals,
   assess,
   history,
+  projection,
 }: {
   vitals: Vitals;
-  assess: ReturnType<typeof usePatientState>["assess"];
+  assess: Assessment;
   history: Vitals[];
+  projection: Branch | null;
 }) {
-  const risk = assess.deterioration_risk;
-  const [view, setView] = useState<"3d" | "physio">("3d");
   const ui = STATUS_UI[assess.status];
   const trend = trendUI(assess.trend);
 
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
+      {/* La cadena causal es lo primero y lo más grande del centro: es lo que
+          hace visible que hay un motor calculando, sin explicar nada. */}
       <Card className="flex min-h-0 flex-[1.05] flex-col overflow-hidden">
-        <div className="flex shrink-0 items-center gap-5 border-b border-line px-4">
-          <Tab active={view === "3d"} onClick={() => setView("3d")}>
-            VISTA 3D
-          </Tab>
-          <Tab active={view === "physio"} onClick={() => setView("physio")}>
-            CADENA CAUSAL
-          </Tab>
+        <div className="flex shrink-0 items-center justify-between border-b border-line px-4 py-2">
+          <span className="text-[0.5625rem] tracking-[0.16em] text-mid">
+            QUÉ LE ESTÁ PASANDO AL PACIENTE
+          </span>
+          <span className="flex items-center gap-2.5 text-[0.5rem]">
+            <span style={{ color: ui.color }}>{ui.label}</span>
+            <span className="text-dim">·</span>
+            <span style={{ color: trend.color }}>
+              {trend.label} {trend.glyph}
+            </span>
+            <span className="text-dim">·</span>
+            <span className="text-lo">
+              riesgo{" "}
+              <span className="font-mono text-mid">
+                {assess.deterioration_risk}%
+              </span>
+            </span>
+          </span>
         </div>
 
-        <div className="relative min-h-0 flex-1">
+        <div className="relative flex min-h-0 flex-1 items-center">
           <div
             className="absolute inset-0"
             style={{
               background:
-                "radial-gradient(ellipse 55% 70% at 50% 48%, rgba(30,90,140,0.18) 0%, rgba(10,20,35,0.4) 55%, transparent 100%)",
+                "radial-gradient(ellipse 50% 70% at 16% 50%, rgba(30,90,140,0.16) 0%, transparent 70%)",
             }}
           />
-
-          {view === "physio" ? (
+          <div className="relative h-full w-[18%] shrink-0">
+            <BeatingHeart
+              hr={vitals.hr}
+              rhythm={vitals.rhythm}
+              strokeVolume={vitals.sv}
+              perfusion={vitals.perfusion_index}
+              className="absolute top-1/2 left-1/2 h-[88%] w-[86%] -translate-x-1/2 -translate-y-1/2"
+            />
+          </div>
+          <div className="relative min-w-0 flex-1">
             <CausalChain vitals={vitals} assess={assess} history={history} />
-          ) : (
-            <>
-          <BeatingHeart
-            hr={vitals.hr}
-            rhythm={vitals.rhythm}
-            strokeVolume={vitals.sv}
-            perfusion={vitals.perfusion_index}
-            className="absolute top-1/2 left-1/2 h-[92%] w-[26%] -translate-x-1/2 -translate-y-1/2"
-          />
-
-          {/* estado hemodinámico */}
-          <Floating className="top-1/2 left-4 w-[10.5rem] -translate-y-1/2">
-            <Label>ESTADO HEMODINÁMICO</Label>
-            <div
-              className="mt-1.5 text-[0.9rem] font-semibold"
-              style={{ color: ui.color }}
-            >
-              {assess.status === "critical"
-                ? "CRÍTICO"
-                : assess.status === "unstable"
-                  ? "INESTABLE"
-                  : "ESTABLE"}
-            </div>
-            <RiskDial value={risk} />
-            <div className="mt-2.5 rounded-md border border-line bg-card px-2.5 py-1.5 text-center text-[0.5rem] text-lo">
-              Tendencia:{" "}
-              <span style={{ color: trend.color }}>
-                {trend.label} {trend.glyph}
-              </span>
-            </div>
-          </Floating>
-
-          {/* flujo y perfusión */}
-          <Floating className="top-1/2 right-4 w-[9.5rem] -translate-y-1/2">
-            <Label>FLUJO Y PERFUSIÓN</Label>
-            <div className="mt-2 flex items-center gap-2">
-              <PerfusionBody perfusion={vitals.perfusion_index} />
-              <PerfusionScale />
-            </div>
-            <div className="mt-2 text-center text-[0.5rem] text-lo">
-              Perfusión tisular
-            </div>
-            <div
-              className={`text-center text-[0.75rem] font-semibold ${
-                vitals.perfusion_index > 0.75
-                  ? "text-ok"
-                  : vitals.perfusion_index > 0.6
-                    ? "text-warn"
-                    : "text-crit"
-              }`}
-            >
-              {vitals.perfusion_index > 0.75
-                ? "ADECUADA"
-                : vitals.perfusion_index > 0.6
-                  ? "LIMÍTROFE"
-                  : "COMPROMETIDA"}
-            </div>
-          </Floating>
-            </>
-          )}
+          </div>
         </div>
       </Card>
 
       <Card className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center justify-between px-4 py-2.5">
+        <div className="flex shrink-0 items-center justify-between px-4 py-2">
           <span className="text-[0.5625rem] tracking-[0.16em] text-mid">
-            TENDENCIAS FISIOLÓGICAS
+            TRAYECTORIA
           </span>
-          <span className="rounded-md border border-line px-2.5 py-1 text-[0.5625rem] text-mid">
-            Tiempo real
-          </span>
-        </div>
-
-        <div className="flex shrink-0 gap-4 px-4 pb-1">
-          {SERIES.map((s) => (
-            <span
-              key={s.key}
-              className="flex items-center gap-1.5 text-[0.5rem] text-mid"
-            >
+          <span className="flex items-center gap-3">
+            {SERIES.map((s) => (
               <span
-                className="h-[0.3rem] w-[0.3rem] rounded-full"
-                style={{ background: s.color }}
-              />
-              {s.label}
+                key={s.key}
+                className="flex items-center gap-1.5 text-[0.5rem] text-mid"
+              >
+                <span
+                  className="h-[0.3rem] w-[0.3rem] rounded-full"
+                  style={{ background: s.color }}
+                />
+                {s.label}
+              </span>
+            ))}
+            <span className="ml-1 flex items-center gap-1.5 text-[0.5rem] text-dim">
+              <span className="inline-block h-0 w-4 border-t border-dashed border-[var(--text-lo)]" />
+              proyectado
             </span>
-          ))}
+          </span>
         </div>
 
         <div className="min-h-0 flex-1 px-2">
-          <TrendChart history={history} />
+          <TrendChart history={history} projection={projection} />
         </div>
 
-        {/* hitos derivados de la historia real, no horas inventadas */}
-        <div className="grid shrink-0 grid-cols-4 gap-2 px-4 pt-1">
-          {caseEvents(history)
-            .slice(-4)
-            .reverse()
-            .map((c) => (
-              <div
-                key={c.strong + c.t}
-                className={`rounded-md border px-2.5 py-1.5 ${
-                  c.crit
-                    ? "border-[rgba(229,72,77,0.4)] bg-[rgba(229,72,77,0.06)]"
-                    : "border-line bg-card"
-                }`}
-              >
-                <div
-                  className={`font-mono text-[0.5625rem] ${c.crit ? "text-crit" : "text-mid"}`}
-                >
-                  {caseClock(c.t).hhmm}
-                </div>
-                <div
-                  className={`mt-0.5 truncate text-[0.5rem] ${c.crit ? "text-crit" : "text-lo"}`}
-                >
-                  {c.strong}
-                  {c.rest}
-                </div>
-              </div>
-            ))}
-          {caseEvents(history).length === 0 && (
-            <div className="col-span-4 rounded-md border border-line bg-card px-2.5 py-1.5 text-[0.5rem] text-lo">
-              Sin eventos: el paciente se mantiene dentro de rangos normales.
+        <div className="shrink-0 px-4 pb-2">
+          {projection ? (
+            <div
+              className="rounded-md border px-3 py-1.5 text-[0.5rem]"
+              style={{
+                borderColor: `color-mix(in srgb, ${projection.color} 35%, transparent)`,
+                background: `color-mix(in srgb, ${projection.color} 7%, transparent)`,
+              }}
+            >
+              <span style={{ color: projection.color }}>
+                {projection.human}
+              </span>
+              <span className="text-mid"> — {projection.verdict}</span>
+              <span className="ml-2 text-dim">
+                Línea punteada: futuro simulado, no medido.
+              </span>
+            </div>
+          ) : (
+            <div className="rounded-md border border-line bg-card px-3 py-1.5 text-[0.5rem] text-lo">
+              Pasa el mouse por una opción de abajo para ver su trayectoria
+              proyectada aquí.
             </div>
           )}
         </div>
-
-        <div className="flex shrink-0 items-center gap-2.5 px-4 py-2.5">
-          <span className="rounded border border-[rgba(63,191,127,0.35)] bg-[rgba(63,191,127,0.08)] px-2 py-1 text-[0.5rem] tracking-[0.08em] text-ok">
-            STREAM ACTIVO
-          </span>
-          <span className="text-[0.5625rem] text-lo">
-            Datos fisiológicos recibiéndose en tiempo real
-          </span>
-          <Sparkline
-            values={history.slice(-40).map((h) => h.map)}
-            min={40}
-            max={100}
-            color="var(--ok)"
-            width={90}
-            height={16}
-          />
-        </div>
       </Card>
-    </div>
-  );
-}
-
-function Tab({
-  children,
-  active,
-  onClick,
-}: {
-  children: React.ReactNode;
-  active?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`-mb-px border-b-2 py-2.5 text-[0.5625rem] tracking-[0.12em] transition-colors ${
-        active
-          ? "border-cyan text-cyan"
-          : "border-transparent text-lo hover:text-mid"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
-function Floating({
-  className,
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={`absolute rounded-[0.6rem] border border-line bg-[rgba(8,12,18,0.82)] p-3 backdrop-blur-sm ${className ?? ""}`}
-    >
-      {children}
-    </div>
-  );
-}
-
-const Label = ({ children }: { children: React.ReactNode }) => (
-  <div className="text-[0.4375rem] tracking-[0.18em] text-dim">{children}</div>
-);
-
-function RiskDial({ value }: { value: number }) {
-  const r = 42;
-  const c = 2 * Math.PI * r;
-  return (
-    <div className="relative mx-auto mt-3 h-[6.2rem] w-[6.2rem]">
-      <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="var(--line)" strokeWidth="4" />
-        <circle
-          cx="50"
-          cy="50"
-          r={r}
-          fill="none"
-          stroke="var(--crit)"
-          strokeWidth="4"
-          strokeLinecap="round"
-          strokeDasharray={`${(c * value) / 100} ${c}`}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <div className="font-mono text-[1.4rem] leading-none font-semibold text-crit tabular-nums">
-          {value}
-          <span className="text-[0.7rem]">%</span>
-        </div>
-        <div className="mt-1 text-center text-[0.4375rem] leading-tight tracking-[0.1em] text-dim">
-          RIESGO DE
-          <br />
-          DETERIORO
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/** Silueta con el árbol vascular teñido según la perfusión. */
-function PerfusionBody({ perfusion }: { perfusion: number }) {
-  const hue = 120 * Math.min(1, Math.max(0, (perfusion - 0.4) / 0.6));
-  const c = `hsl(${hue} 75% 55%)`;
-  return (
-    <svg viewBox="0 0 60 120" className="h-[6.5rem] w-auto">
-      <g stroke="var(--line-strong)" strokeWidth="1.2" fill="none">
-        <circle cx="30" cy="12" r="7.5" />
-        <path d="M30 20v34M30 24 14 36M30 24l16 12M22 54l-4 30M38 54l4 30M18 84l-2 22M42 84l2 22" />
-      </g>
-      <g stroke={c} strokeWidth="1.5" fill="none" opacity="0.9">
-        <path d="M30 26v26" />
-        <path d="M30 30 20 38M30 30l10 8" />
-        <path d="M25 52l-3 28M35 52l3 28" />
-      </g>
-      <circle cx="30" cy="34" r="3.2" fill={c} opacity="0.85" />
-    </svg>
-  );
-}
-
-function PerfusionScale() {
-  return (
-    <div className="flex h-[6.5rem] flex-col items-center justify-between">
-      <span className="text-[0.4375rem] text-ok">100%</span>
-      <div
-        className="w-[0.35rem] flex-1 rounded-full"
-        style={{
-          background:
-            "linear-gradient(to bottom, var(--ok), var(--warn) 55%, var(--crit))",
-        }}
-      />
-      <span className="text-[0.4375rem] text-crit">0%</span>
     </div>
   );
 }
@@ -547,67 +399,90 @@ function PerfusionScale() {
 /* --------------------------------------------------------- columna derecha */
 
 function RightColumn({
-  vitals,
-  assess,
+  agents,
   history,
 }: {
-  vitals: Vitals;
-  assess: Assessment;
+  agents: AgentOutput[];
   history: Vitals[];
 }) {
-  const agents = liveAgents(vitals, assess);
-  const active = assess.status !== "stable";
   const events = caseEvents(history).slice(0, 6);
+  const active = agents.some((a) => a.state !== "En espera");
 
   return (
     <div className="flex min-h-0 flex-col gap-2.5">
-      <Card className="flex min-h-0 flex-col">
+      <Card className="flex min-h-0 flex-[1.6] flex-col overflow-hidden">
         <CardHeader
           title="AGENTES DE IA"
           live={active}
-          liveLabel={active ? "ACTIVOS" : "EN ESPERA"}
+          liveLabel={active ? "ANALIZANDO" : "EN ESPERA"}
         />
-        <div className="flex flex-col">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
           {agents.map((a, i) => {
             const Icon = AGENT_ICON[a.id];
             return (
               <div
                 key={a.id}
-                className={`flex items-start gap-2.5 px-3 py-2.5 ${i ? "border-t border-line" : ""}`}
+                className={`px-3 py-2.5 ${i ? "border-t border-line" : ""}`}
               >
-                <span
-                  className="flex h-[2rem] w-[2rem] shrink-0 items-center justify-center rounded-[0.5rem] border"
-                  style={{
-                    borderColor: `color-mix(in srgb, ${a.color} 35%, transparent)`,
-                    background: `color-mix(in srgb, ${a.color} 10%, transparent)`,
-                    color: a.color,
-                  }}
-                >
-                  <Icon className="h-[1rem] w-[1rem]" />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[0.6875rem] text-hi">
-                      {a.name}
-                    </span>
-                    <span
-                      className="shrink-0 rounded border px-1.5 py-[0.06rem] text-[0.4375rem]"
-                      style={{
-                        borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
-                        color: active ? a.color : "var(--text-lo)",
-                      }}
-                    >
-                      {a.state}
-                    </span>
-                    <ChevronRight className="h-[0.65rem] w-[0.65rem] shrink-0 text-dim" />
-                  </div>
-                  <p className="mt-1 text-[0.5rem] leading-[1.5] text-mid">
-                    {a.note}
-                  </p>
-                  <div className="mt-1 text-right font-mono text-[0.4375rem] text-dim">
-                    {caseClock(vitals.t).hhmmss}
-                  </div>
+                <div className="flex items-center gap-2">
+                  <span
+                    className="flex h-[1.6rem] w-[1.6rem] shrink-0 items-center justify-center rounded-[0.45rem] border"
+                    style={{
+                      borderColor: `color-mix(in srgb, ${a.color} 35%, transparent)`,
+                      background: `color-mix(in srgb, ${a.color} 10%, transparent)`,
+                      color: a.color,
+                    }}
+                  >
+                    <Icon className="h-[0.85rem] w-[0.85rem]" />
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[0.625rem] text-hi">
+                    {a.name}
+                  </span>
+                  <span
+                    className="shrink-0 rounded border px-1.5 py-[0.06rem] text-[0.4375rem]"
+                    style={{
+                      borderColor: `color-mix(in srgb, ${a.color} 30%, transparent)`,
+                      color: a.state === "En espera" ? "var(--text-lo)" : a.color,
+                    }}
+                  >
+                    {a.state}
+                  </span>
                 </div>
+
+                <div className="mt-1 text-[0.4375rem] text-dim">{a.role}</div>
+
+                {/* el hallazgo en español de a pie */}
+                <p className="mt-1.5 text-[0.5625rem] leading-[1.55] text-hi">
+                  {a.headline}
+                </p>
+                {/* y el mismo hallazgo en clínico, para que un médico lo valide */}
+                <p className="mt-1 text-[0.4375rem] leading-[1.5] text-dim">
+                  {a.technical}
+                </p>
+
+                {a.evidence.length > 0 && (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {a.evidence.map((e) => (
+                      <span
+                        key={e.label}
+                        className="rounded border px-1.5 py-[0.1rem] text-[0.4375rem]"
+                        style={{
+                          borderColor:
+                            e.source === "simulado"
+                              ? "rgba(169,123,214,0.3)"
+                              : "var(--line)",
+                          color: "var(--text-lo)",
+                        }}
+                      >
+                        {e.label}{" "}
+                        <span className="font-mono text-mid">{e.value}</span>
+                        <span className="ml-1 text-dim">
+                          {e.source === "simulado" ? "sim" : "med"}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -615,11 +490,7 @@ function RightColumn({
       </Card>
 
       <Card className="flex min-h-0 flex-1 flex-col">
-        <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2.5">
-          <span className="text-[0.5625rem] tracking-[0.14em] text-mid">
-            LÍNEA DE EVENTOS EN TIEMPO REAL
-          </span>
-        </div>
+        <CardHeader title="LO QUE HA PASADO" />
         <div className="flex min-h-0 flex-1 flex-col justify-around px-3 py-2">
           {events.length === 0 && (
             <div className="text-[0.5rem] text-lo">
@@ -657,9 +528,7 @@ function Card({
   children: React.ReactNode;
 }) {
   return (
-    <div
-      className={`rounded-[0.6rem] border border-line bg-card ${className}`}
-    >
+    <div className={`rounded-[0.6rem] border border-line bg-card ${className}`}>
       {children}
     </div>
   );
@@ -675,7 +544,7 @@ function CardHeader({
   liveLabel?: string;
 }) {
   return (
-    <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2.5">
+    <div className="flex shrink-0 items-center justify-between border-b border-line px-3 py-2">
       <span className="text-[0.5625rem] tracking-[0.14em] text-mid">
         {title}
       </span>

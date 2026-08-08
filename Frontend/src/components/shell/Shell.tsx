@@ -7,13 +7,11 @@ import {
   Gear,
   HeartRate,
   LogoMark,
-  NavAgents,
   NavHistory,
   NavResults,
   NavSimulations,
   Pause,
   Plus,
-  CheckSquare,
 } from "@/components/icons";
 
 /** Cabecera común: identidad, caso, alarma, cuenta atrás y presencia. */
@@ -154,26 +152,29 @@ const Divider = () => <div className="my-1 w-px shrink-0 bg-line" />;
 
 /* ------------------------------------------------------------ nav inferior */
 
+/**
+ * Cuatro entradas, no siete.
+ *
+ * Agentes e Intervenciones eran pantallas aparte y esa dispersión era el
+ * problema: había que navegar para entender una sola historia. Ahora los
+ * agentes y la decisión viven DENTRO del monitor, que es donde ocurre todo.
+ */
 export const NAV_ITEMS = [
   { label: "Paciente", icon: HeartRate, href: "/monitor" },
-  { label: "Agentes", icon: NavAgents, href: "/agents" },
-  { label: "Intervenciones", icon: CheckSquare, href: "/interventions" },
-  { label: "Simulaciones", icon: NavSimulations, href: "/compare" },
-  { label: "Resultados", icon: NavResults, href: "/response" },
-  { label: "Historial", icon: NavHistory, href: "#" },
-  { label: "Configuración", icon: Gear, href: "#" },
+  { label: "Comparar", icon: NavSimulations, href: "/compare" },
+  { label: "Resultado", icon: NavResults, href: "/response" },
+  { label: "Casos", icon: NavHistory, href: "/" },
 ] as const;
 
 export function BottomNav({
   active,
   accent = "var(--crit)",
-  items = 6,
+  items = 4,
   underline = false,
   children,
 }: {
   active: string;
   accent?: string;
-  /** el monitor muestra 6 entradas; el command center añade Configuración */
   items?: number;
   underline?: boolean;
   children?: React.ReactNode;

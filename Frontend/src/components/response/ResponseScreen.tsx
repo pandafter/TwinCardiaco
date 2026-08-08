@@ -2,12 +2,10 @@
 
 import { usePatientState } from "@/hooks/usePatientState";
 import { caseClock, LEVEL, type Vitals } from "@/lib/engine";
-import { AGENT_META } from "@/lib/agents";
+import { AGENT_META, type AgentId } from "@/lib/agents";
 import {
   AgentCardio,
   AgentOrchestrator,
-  AgentPharma,
-  AgentPhysio,
   AgentSim,
   ArrowRight,
   ChevronDown,
@@ -27,20 +25,17 @@ import { BeatingHeart } from "@/components/monitor/BeatingHeart";
 import { Sparkline } from "@/components/monitor/Sparkline";
 import { TrajectoryChart } from "./TrajectoryChart";
 
-const AGENT_ICON = {
-  cardiology: AgentCardio,
-  pharmacology: AgentPharma,
-  physiology: AgentPhysio,
+// Tres agentes, los mismos del monitor, hablando sin jerga.
+const AGENT_ICON: Record<AgentId, typeof AgentCardio> = {
+  clinical: AgentCardio,
   simulation: AgentSim,
   orchestrator: AgentOrchestrator,
 };
 
-const AGENT_STATUS: Record<string, string> = {
-  cardiology: "Reevaluando el ritmo. La frecuencia va cediendo.",
-  pharmacology: "Respuesta esperada al fármaco.",
-  physiology: "La perfusión mejora.",
-  simulation: "Trayectoria actualizada.",
-  orchestrator: "Consenso: trayectoria de estabilización.",
+const AGENT_STATUS: Record<AgentId, string> = {
+  clinical: "El pulso va cediendo y el corazón vuelve a llenarse mejor.",
+  simulation: "Trayectoria actualizada con la decisión tomada.",
+  orchestrator: "El paciente va hacia la estabilización.",
 };
 
 const ROWS = [

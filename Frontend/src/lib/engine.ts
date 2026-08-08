@@ -120,12 +120,15 @@ export class Engine {
   private coAtIntervention = 0;
   private hrBaseAtIntervention = 0;
 
-  constructor(startAt = 0, intervention?: { at: number; key: string }) {
+  constructor(
+    startAt = 0,
+    intervention?: { at: number; key: string; efficacy?: number },
+  ) {
     const dt = 0.25;
     const steps = Math.round(startAt / dt);
     for (let i = 0; i < steps; i++) {
       if (intervention && this.interventionAt === null && this.t >= intervention.at)
-        this.applyIntervention(intervention.key);
+        this.applyIntervention(intervention.key, intervention.efficacy);
       this.step(dt);
     }
   }
@@ -138,7 +141,7 @@ export class Engine {
    * beta-2); el vasopresor hace lo contrario. Esa diferencia es lo que hace
    * que uno mejore el gasto y el otro solo la presión.
    */
-  applyIntervention(key: string) {
+  applyIntervention(key: string, efficacy = 1) {
     this.interventionAt = this.t;
     this.interventionKey = key;
     this.mapAtIntervention = this.mapS;
@@ -148,18 +151,23 @@ export class Engine {
     // fisiología, no el reloj.
     this.hrBaseAtIntervention = scriptedHr(this.t);
 
+    // `efficacy` escala el efecto: 0 = "¿y si el fármaco no le hace efecto?",
+    // 0.5 = media dosis. Es lo que permite responder preguntas en lenguaje
+    // natural sin salirse del espacio de parámetros del motor.
+    const e = clamp(efficacy, 0, 2);
+
     if (key === "inotrope") {
-      this.drugContractility += 0.38;
-      this.drugSvr -= 0.22;
-      this.drugHr += 14;
+      this.drugContractility += 0.38 * e;
+      this.drugSvr -= 0.22 * e;
+      this.drugHr += 14 * e;
       this.onset = 45;
     } else if (key === "vasopressor") {
-      this.drugContractility += 0.12;
-      this.drugSvr += 0.5;
-      this.drugHr += 5;
+      this.drugContractility += 0.12 * e;
+      this.drugSvr += 0.5 * e;
+      this.drugHr += 5 * e;
       this.onset = 30;
     } else if (key === "fluid") {
-      this.drugContractility += 0.18;
+      this.drugContractility += 0.18 * e;
       this.onset = 60;
     }
   }
