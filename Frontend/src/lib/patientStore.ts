@@ -11,8 +11,15 @@ import {
   type BackendOpinion,
   type BackendSimulation,
   type BackendVitals,
+  type Handlers,
   type LiveStatus,
 } from "./live";
+
+/**
+ * Por dónde llegan los datos ahora mismo. Los dos primeros son el backend; se
+ * distinguen porque el jurado tiene que poder ver cuál está en uso.
+ */
+export type Transport = "portal" | "sse" | null;
 
 /**
  * Paciente compartido de la sesión. Dueño único del estado en el cliente.
@@ -38,6 +45,26 @@ class PatientStore {
   /** de dónde salen los datos ahora mismo */
   source: "backend" | "local" = "local";
   liveStatus: LiveStatus = "offline";
+
+  /**
+   * Cuál de los dos transportes del backend está sirviendo. `source` sigue
+   * diciendo backend-o-local para no cambiar lo que ya lee la UI; esto añade
+   * el detalle de si ese backend llega por Portal o por el SSE de reserva.
+   */
+  transport: Transport = null;
+
+  /** Usuarios conectados al mismo paciente. Sale de la presencia de Portal. */
+  connected = 0;
+
+  /**
+   * Con Portal listo, los frames del SSE se ignoran.
+   *
+   * Los dos transportes llevan los mismos eventos: si se aceptaran ambos, cada
+   * tick entraría dos veces en `history` y las curvas irían al doble de
+   * velocidad. Portal manda y el SSE queda de reserva, que es el orden que
+   * pide el proyecto.
+   */
+  private portalReady = false;
 
   /** intervención aplicada en esta sesión */
   applied: string | null = null;
@@ -65,45 +92,119 @@ class PatientStore {
 
   private start() {
     if (!this.live) {
-      this.live = new LiveSource({
-        onFrame: (f, raw) => this.onBackendFrame(f, raw),
-        onTransition: () => this.notify(),
-        onAgentStarted: (o) => {
-          this.agents.set(o.agent, { ...o, pending: true });
-          this.notify();
-        },
-        onAgentOpinion: (o) => {
-          this.agents.set(o.agent, { ...o, pending: false });
-          this.notify();
-        },
-        onConflict: (c) => {
-          this.conflict = c;
-          this.notify();
-        },
-        onConsensus: (c) => {
-          this.consensus = c;
-          this.notify();
-        },
-        onSimulation: (s) => {
-          this.simulation = s;
-          this.notify();
-        },
-        onStatus: (s) => {
-          this.liveStatus = s;
-          if (s === "live") {
-            this.source = "backend";
-            this.stopLocalClock();
-          } else {
-            // el backend se cayó: el motor local retoma donde estaba
-            this.source = "local";
-            this.startLocalClock();
-          }
-          this.notify();
-        },
-      });
+      this.live = new LiveSource(this.handlersFor("sse"));
       this.live.connect();
     }
     if (this.source === "local") this.startLocalClock();
+  }
+
+  /**
+   * El camino de entrada, uno solo, parametrizado por transporte.
+   *
+   * Portal y el SSE alimentan exactamente esto. Tener un solo camino es lo que
+   * evita que cambiar de transporte cambie el comportamiento de la pantalla.
+   */
+  private handlersFor(from: Exclude<Transport, null>): Handlers {
+    const stale = () => from === "sse" && this.portalReady;
+    return {
+      onFrame: (f, raw) => {
+        if (stale()) return;
+        // Que llegue un frame ES la prueba de que este transporte sirve, así
+        // que reclama la fuente aquí y no solo en onStatus. Sin esto, Portal
+        // cayéndose con el SSE aún vivo dejaba la pantalla en el motor local:
+        // LiveSource no reemite "live" porque para él nada cambió, y el reloj
+        // local acababa peleando contra los frames del SSE.
+        if (this.transport !== from) {
+          this.source = "backend";
+          this.transport = from;
+          this.liveStatus = "live";
+          this.stopLocalClock();
+        }
+        this.onBackendFrame(f, raw);
+      },
+      onTransition: () => {
+        if (stale()) return;
+        this.notify();
+      },
+      onAgentStarted: (o) => {
+        if (stale()) return;
+        this.agents.set(o.agent, { ...o, pending: true });
+        this.notify();
+      },
+      onAgentOpinion: (o) => {
+        if (stale()) return;
+        this.agents.set(o.agent, { ...o, pending: false });
+        this.notify();
+      },
+      onConflict: (c) => {
+        if (stale()) return;
+        this.conflict = c;
+        this.notify();
+      },
+      onConsensus: (c) => {
+        if (stale()) return;
+        this.consensus = c;
+        this.notify();
+      },
+      onSimulation: (s) => {
+        if (stale()) return;
+        this.simulation = s;
+        this.notify();
+      },
+      onStatus: (s) => {
+        if (from === "portal") this.portalReady = s === "live";
+
+        if (s === "live") {
+          // El SSE no se declara fuente mientras Portal sirve.
+          if (!stale()) {
+            this.liveStatus = "live";
+            this.source = "backend";
+            this.transport = from;
+            this.stopLocalClock();
+          }
+          this.notify();
+          return;
+        }
+
+        // Se cayó un transporte. Si no era el que servía, no hay nada que
+        // degradar: anunciarlo bajaría una pantalla que va perfectamente.
+        if (this.transport !== from) {
+          this.notify();
+          return;
+        }
+
+        // Portal cae con el SSE vivo: relevo directo, sin pasar por el motor
+        // local. Es la degradación que promete el proyecto —si Portal cae, la
+        // simulación sigue y el front cae a SSE— y sin este caso se vería un
+        // parpadeo al motor local hasta el siguiente tick.
+        if (from === "portal" && this.live?.status === "live") {
+          this.transport = "sse";
+          this.notify();
+          return;
+        }
+
+        // No queda backend: el motor local retoma donde estaba.
+        this.liveStatus = s;
+        this.source = "local";
+        this.transport = null;
+        this.startLocalClock();
+        this.notify();
+      },
+    };
+  }
+
+  /**
+   * Handlers para el transporte de Portal. Memoizados: el puente los pasa a
+   * un efecto de React, y una identidad nueva por render lo reengancharía en
+   * bucle.
+   */
+  readonly portal: Handlers = this.handlersFor("portal");
+
+  /** Usuarios en el canal. Solo Portal lo sabe; el SSE no tiene presencia. */
+  setConnected(n: number) {
+    if (this.connected === n) return;
+    this.connected = n;
+    this.notify();
   }
 
   private stop() {

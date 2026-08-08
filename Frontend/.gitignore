@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# La plantilla si se versiona, y la excepcion va DESPUES de .env* porque en
+# git gana el ultimo patron que coincide. Sin ella nadie sabe que variables
+# hay que rellenar para encender Portal.
+!.env.example
 
 # vercel
 .vercel

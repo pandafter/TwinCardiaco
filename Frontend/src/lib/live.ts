@@ -191,7 +191,11 @@ export function toFrame(
 
 export type LiveStatus = "connecting" | "live" | "offline";
 
-type Handlers = {
+/**
+ * Lo que un transporte le entrega al store. Exportado porque hay dos
+ * transportes —SSE y Portal— y los dos alimentan exactamente este contrato.
+ */
+export type Handlers = {
   onFrame: (f: Frame, raw: BackendVitals) => void;
   onTransition: (t: BackendTransition) => void;
   onAgentStarted: (o: BackendOpinion) => void;
