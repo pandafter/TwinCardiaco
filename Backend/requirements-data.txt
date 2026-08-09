@@ -1,0 +1,3 @@
+# Solo para regenerar el artefacto ECG offline; no se instala en producción.
+wfdb>=4.3
+

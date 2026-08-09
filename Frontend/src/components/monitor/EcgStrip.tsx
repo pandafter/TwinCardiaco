@@ -2,6 +2,14 @@
 
 import { useMemo } from "react";
 import type { Rhythm } from "@/lib/engine";
+import {
+  beatInterval,
+  CARDIAC_PATTERN_BEATS,
+  cardiacCycle,
+  isIrregular,
+  QRS_NORMAL_MS,
+} from "@/lib/cardiacCycle";
+import ecgTemplates from "@/data/ecgTemplates.json";
 
 /**
  * Velocidad de barrido. A 72 px/s cabían 14 latidos y a 155 lpm cada
@@ -10,7 +18,6 @@ import type { Rhythm } from "@/lib/engine";
  * no está. A 128 px/s se ven ~7 latidos, con sitio para distinguirlos.
  */
 const PX_PER_SEC = 128;
-const BEATS = 10;
 const H = 100;
 const BASE = 62;
 
@@ -40,13 +47,22 @@ const BASE = 62;
  */
 function beatPath(
   x: number,
-  w: number,
+  interval: number,
+  hr: number,
+  rhythm: Rhythm,
   amp: number,
-  withP: boolean,
   ischemia: number,
+  qrsMs: number,
 ) {
-  const k = w / 100;
-  const p = (n: number) => x + n * k;
+  const cycle = cardiacCycle(
+    hr,
+    rhythm,
+    ischemia,
+    qrsMs,
+    interval,
+  );
+  const p = (milliseconds: number) =>
+    x + (milliseconds / 1000) * PX_PER_SEC;
   const y = (v: number) => BASE - v * amp;
 
   // El ST se hunde progresivamente. 9 unidades a isquemia plena es una
@@ -56,44 +72,60 @@ function beatPath(
   const tPeak = 15 - 30 * ischemia;
   // Bajo voltaje: el QRS pierde hasta un 35% de amplitud.
   const r = 46 * (1 - 0.35 * ischemia);
-  const s = -16 * (1 - 0.3 * ischemia);
-  // QT largo: la T se desplaza hacia la derecha y se ensancha.
-  const tStart = 58 + 6 * ischemia;
-  const tMid = 69 + 8 * ischemia;
-  const tEnd = 80 + 10 * ischemia;
+  const qrsStart = cycle.qrsStartMs;
+  const qrsEnd = qrsStart + cycle.qrsMs;
+  const repolarization = Math.max(60, cycle.qtMs - cycle.qrsMs);
+  const tStart = qrsEnd + repolarization * 0.18;
+  const tMid = qrsEnd + repolarization * 0.58;
+  const tEnd = cycle.tEndMs;
+  const pStart = Math.max(8, qrsStart - cycle.prMs + 12);
+  const pEnd = Math.min(qrsStart - 12, pStart + cycle.pDurationMs);
+  const pPeak = (pStart + pEnd) / 2;
+  const pWave = rhythm !== "afib_rvr"
+    ? `M${p(pStart)} ${BASE} Q${p(pPeak)} ${y(9)} ${p(pEnd)} ${BASE}`
+    : "";
 
-  const pWave = withP ? `L${p(10)} ${BASE} Q${p(16)} ${y(9)} ${p(22)} ${BASE}` : "";
+  // Morfología derivada de 180 complejos medianos del MIT-BIH. Se elimina
+  // la deriva entre los extremos para que cada QRS vuelva exactamente a la
+  // línea isoeléctrica; el motor sigue decidiendo duración y amplitud.
+  const template = rhythm === "afib_rvr"
+    ? ecgTemplates.templates.afib.points
+    : ecgTemplates.templates.normal.points;
+  const first = template[0];
+  const last = template[template.length - 1];
+  const qrsPath = template
+    .map((value, index) => {
+      const fraction = index / (template.length - 1);
+      const baseline = first + (last - first) * fraction;
+      const command = index === 0 ? "M" : "L";
+      return `${command}${p(qrsStart + cycle.qrsMs * fraction)} ${y((value - baseline) * r)}`;
+    })
+    .join(" ");
 
   return [
-    `L${p(6)} ${BASE}`,
+    `M${x} ${BASE} L${p(cycle.rrMs)} ${BASE}`,
     pWave,
-    `L${p(31)} ${BASE}`,
-    `L${p(34)} ${y(-7)}`, // Q
-    `L${p(39)} ${y(r)}`, // R
-    `L${p(44)} ${y(s)}`, // S
-    `L${p(48)} ${y(st)}`, // punto J — aquí empieza la depresión del ST
-    `L${p(tStart)} ${y(st)}`, // segmento ST deprimido
+    `M${p(qrsStart - 8)} ${BASE} L${p(qrsStart)} ${BASE}`,
+    qrsPath,
+    `L${p(qrsEnd)} ${y(st)}`, // J
+    `L${p(tStart)} ${y(st)}`, // ST
     `Q${p(tMid)} ${y(st + tPeak)} ${p(tEnd)} ${BASE}`, // onda T
-    `L${p(100)} ${BASE}`,
   ]
     .filter(Boolean)
     .join(" ");
 }
 
-/** Jitter determinista: los intervalos de la fibrilación son irregulares. */
-function jitter(i: number) {
-  let x = Math.imul(i + 1, 0x9e3779b9) >>> 0;
-  x = Math.imul(x ^ (x >>> 15), 0x85ebca6b) >>> 0;
-  x = (x ^ (x >>> 13)) >>> 0;
-  return (x / 0xffffffff - 0.5) * 2;
-}
-
 /** Los hallazgos presentes ahora mismo, para rotularlos junto al trazado. */
-export function ecgFindings(ischemia: number, rhythm: Rhythm): string[] {
+export function ecgFindings(
+  ischemia: number,
+  rhythm: Rhythm,
+  qrsMs = QRS_NORMAL_MS,
+): string[] {
   if (rhythm === "asystole") return ["Asistolia"];
   const out: string[] = [];
   if (rhythm === "sinus_tach") out.push("Taquicardia sinusal");
   if (rhythm === "afib_rvr") out.push("FA con respuesta rápida");
+  if (qrsMs >= 120) out.push(`QRS ancho · ${Math.round(qrsMs)} ms`);
   if (ischemia > 0.25) out.push("Descenso del ST");
   if (ischemia > 0.45) out.push("Onda T invertida");
   if (ischemia > 0.6) out.push("Bajo voltaje");
@@ -118,24 +150,31 @@ export function EcgStrip({
   // también la isquemia, en pasos del 5%
   const hrQ = Math.round(hr / 5) * 5;
   const ischQ = Math.round(Math.min(1, Math.max(0, ischemia)) * 20) / 20;
-  const irregular = rhythm === "afib_rvr";
+  const irregular = isIrregular(rhythm);
   const flat = rhythm === "asystole";
 
   const { d, width, seconds } = useMemo(() => {
-    const beats = BEATS;
-    const rr = 60 / Math.max(30, hrQ);
+    const beats = CARDIAC_PATTERN_BEATS;
     let x = 0;
     let total = 0;
     let path = `M0 ${BASE}`;
     for (let i = 0; i < beats; i++) {
-      const interval = irregular ? rr * (1 + jitter(i) * 0.25) : rr;
+      const interval = beatInterval(hrQ, i, irregular);
       const w = interval * PX_PER_SEC;
-      path += " " + beatPath(x, w, amplitude, !irregular, ischQ);
+      path += " " + beatPath(
+        x,
+        interval,
+        hrQ,
+        rhythm,
+        amplitude,
+        ischQ,
+        QRS_NORMAL_MS,
+      );
       x += w;
       total += interval;
     }
     return { d: path, width: x, seconds: total };
-  }, [hrQ, irregular, amplitude, ischQ]);
+  }, [hrQ, rhythm, irregular, amplitude, ischQ]);
 
   // Asistolia: la línea plana. No hay nada que trazar y el silencio del
   // monitor dice más que cualquier número de la pantalla.
