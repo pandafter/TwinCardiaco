@@ -6,6 +6,8 @@ import { EXAMPLE_QUESTIONS } from "@/lib/ask";
 import { ask as askAI } from "@/lib/ai/bridge";
 import type { Assessment, Vitals } from "@/lib/engine";
 import { projectBranch, type Branch, type BranchKey } from "@/lib/whatif";
+import type { RoomState } from "@/hooks/useRoom";
+import { DecisionLog, ProposalDeck } from "./RoomBar";
 
 /**
  * La barra de decisión: cuatro opciones en lenguaje humano y una caja para
@@ -41,6 +43,7 @@ export function DecisionBar({
   onAsk,
   applied,
   arrested,
+  room,
 }: {
   branches: Branch[];
   decisionAt: number;
@@ -51,6 +54,7 @@ export function DecisionBar({
   onAsk: (b: Branch | null) => void;
   applied: string[];
   arrested: boolean;
+  room: RoomState;
 }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
@@ -104,12 +108,18 @@ export function DecisionBar({
 
   return (
     <div className="relative flex shrink-0 flex-col gap-2.5 border-t border-line bg-shell px-3 py-3">
+      {/* Las propuestas flotan sobre la barra, donde ya está mirando quien
+          va a decidir. */}
+      <ProposalDeck room={room} />
+
       <div className="flex items-baseline gap-3 px-0.5">
         <h2 className="text-micro tracking-[0.16em] text-mid">¿QUÉ HACEMOS?</h2>
         <span className="text-micro text-lo">
           {arrested
             ? "El corazón se detuvo. Ningún fármaco circula sin bomba."
-            : "Pasa el mouse para ver a dónde lleva cada opción · puedes intervenir las veces que haga falta"}
+            : room.shared
+              ? `Sois ${room.members.length} en la sala: tu clic PROPONE, y otra persona aprueba o veta antes de aplicar.`
+              : "Pasa el mouse para ver a dónde lleva cada opción · puedes intervenir las veces que haga falta"}
         </span>
         {applied.length > 0 && !arrested && (
           <span className="ml-auto text-micro text-lo">
@@ -198,6 +208,8 @@ export function DecisionBar({
       {/* La respuesta FLOTA sobre la barra en vez de empujarla. Empujando, la
           columna de vitales perdía dos filas justo cuando el usuario acababa
           de preguntar algo: el layout saltaba y se perdía el contexto. */}
+      <DecisionLog room={room} />
+
       <AnimatePresence mode="wait">
         {answer && (
           <motion.div

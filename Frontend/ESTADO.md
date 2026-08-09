@@ -62,6 +62,15 @@ layout y no lo es.
 
 Rutas: `/` (selección de paciente), `/monitor`, `/compare`, `/response`.
 
+`/monitor?sala=uci-3` abre la **sesión compartida**. Para probarla sin un
+segundo computador: dos ventanas de incógnito distintas (la identidad vive
+en `sessionStorage`, así que dos pestañas normales del mismo perfil también
+sirven).
+
+**La IA necesita `ANTHROPIC_API_KEY`** en `.env.local` — ver
+`.env.local.example`. Sin ella todo funciona igual, con reglas locales, y la
+pantalla lo dice.
+
 ---
 
 ## 3. Arquitectura
@@ -133,10 +142,26 @@ escenarios y respuesta a la intervención.
 a latido, doble contracción, amplitud según volumen sistólico y color según
 perfusión. `EcgStrip` genera sus complejos según la frecuencia.
 
-**`lib/ask.ts`**: traduce lenguaje natural a `{ intervention, efficacy, delay }`
-y el motor determinista hace el resto — la IA no puede alucinar un número
-porque el espacio de salida es cerrado. Hoy son reglas locales (sin red, sin
-API key, sin latencia); el hueco para el LLM está marcado.
+**La IA es real** y vive en dos route handlers de Next (`src/app/api/`):
+
+- `POST /api/ask` — el modelo lee el estado del paciente EN ESE INSTANTE,
+  lo explica (`reading`) y traduce la pregunta a `{intervention, efficacy,
+  delay_s}`. La fisiología la calcula el motor: el esquema JSON es cerrado,
+  no hay ningún campo donde escribir una cifra inventada.
+- `POST /api/agents` — TRES llamadas, no una que devuelva tres opiniones.
+  Cada especialista corre con su system prompt y una vista FILTRADA del
+  estado, así que el desacuerdo nace de que miran cosas distintas. Los dos
+  en paralelo; el orquestador después, porque los lee. Se pide una vez por
+  hito (cambio de estado o decisión tomada), no por tick.
+
+`lib/ask.ts` sigue existiendo como respaldo local y define el mismo
+contrato. Si no hay key, si la red falla o si el modelo declina, se cae a
+esas reglas y la UI marca la fuente (`IA` / `reglas locales`).
+
+**Por qué no el backend de Python**: corre Python 3.9.6 sin fastapi, numpy,
+scipy ni numba instalados; su `Orchestrator` todavía rostrea `farmacologia`
+(el agente que el front eliminó) y apunta a `claude-sonnet-4-6`, un ID que
+no existe. La ruta de Next no depende de nada de eso.
 
 **`lib/whatif.ts`**: cuatro ramas (`none`, `inotrope`, `vasopressor`, `fluid`)
 con nombres humanos y veredicto en una frase sin jerga. Se precalculan y se
@@ -146,6 +171,29 @@ cachean, así el hover dibuja la trayectoria al instante.
 el paciente / lo que dice la IA / las opciones / el resultado. Avanza sola
 con el estado, y las tabs permiten volver a cualquiera. `FlowGuide` muestra
 en qué paso va el caso y qué se espera del usuario.
+
+**Se puede intervenir varias veces.** `interventionLog` acumula; lo único
+que bloquea la barra es la asistolia. Poder equivocarse y rescatar es lo que
+separa un simulador de una encuesta de una sola pregunta.
+
+**El corazón puede pararse.** La hipoperfusión sostenida daña la bomba
+(rápido para romperse, lento para repararse) y acaba en asistolia: ECG
+plano, vitales en cero, fármacos rechazados. El reloj de la cabecera pasa a
+"hasta que el corazón deje de latir" en cuanto existe.
+
+```
+sin intervenir ................. paro a 07:48
+cualquier decisión al 2:30 ..... no hay paro
+vasopresor tarde (5:00) ........ paro a 09:56, solo lo retrasa
+```
+
+**El ECG cambia de morfología, no solo de velocidad**: descenso del ST,
+onda T que se aplana y se invierte, bajo voltaje y QT largo, todo
+progresivo con la perfusión. Los hallazgos se nombran junto al trazado.
+
+**Sesión compartida** (`?sala=`): uno propone, otro aprueba o veta, y solo
+entonces se aplica — en las dos pantallas. Nadie resuelve su propia
+propuesta. Estando solo, nada de esto aparece.
 
 **Tres agentes**: Cardiología (protege el miocardio), Fisiología (protege el
 oxígeno sistémico) y Orquestador. **No fusiones los dos primeros**: el
@@ -163,6 +211,8 @@ riesgos ya vienen en `risks[]`) y Simulación no opina — es una tool.
 node scripts/calibrate.ts              # tabla del deterioro sin abrir el navegador
 node scripts/calibrate-intervention.ts # respuesta a cada fármaco
 node scripts/calibrate-scenarios.ts    # las tres ramas comparadas
+node scripts/calibrate-arrest.ts       # cuándo para el corazón, con y sin intervenir
+node scripts/check-room.mjs            # la sesión compartida, con dos navegadores
 node scripts/console-check.mjs / /monitor /compare   # errores del navegador por ruta
 node scripts/icon-catalog.mjs          # los 45 iconos a design/icons.png
 npm run shot                           # captura a 1840×1230 + recortes por zona

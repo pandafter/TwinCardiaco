@@ -27,7 +27,9 @@ import {
 import { AnimatedNumber } from "@/components/ui/AnimatedNumber";
 import { DecisionBar } from "./DecisionBar";
 import { FlowGuide, phaseOf } from "./FlowGuide";
-import { EcgStrip } from "./EcgStrip";
+import { EcgStrip, ecgFindings } from "./EcgStrip";
+import { useRoom, type RoomState } from "@/hooks/useRoom";
+import { RoomPresence } from "./RoomBar";
 import { Sparkline } from "./Sparkline";
 import { Stage, type SceneKey } from "./Stage";
 
@@ -56,10 +58,13 @@ export function MonitorScreen({
   startAt = 0,
   frozen = false,
   live = false,
+  roomId = null,
 }: {
   startAt?: number;
   frozen?: boolean;
   live?: boolean;
+  /** `?sala=x`: cuando hay dos personas, decidir pasa a ser proponer */
+  roomId?: string | null;
 }) {
   const { vitals, assess, history, controls, engine, backend } =
     usePatientState({ startAt, frozen, live });
@@ -107,6 +112,9 @@ export function MonitorScreen({
   useEffect(() => {
     if (frozen || assess.status === "stable") return;
     let alive = true;
+    // Marcar "cargando" al lanzar la petición es justo para lo que existe
+    // este efecto: sincronizarse con un sistema externo.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLlmBusy(true);
     deliberate(vitals, assess, branches, applied)
       .then((r) => {
@@ -134,17 +142,37 @@ export function MonitorScreen({
   );
   const projection = hovered ?? asked;
 
+  /**
+   * La sala.
+   *
+   * `?sala=x` la activa; sin ese parámetro nada de esto existe y el monitor
+   * se comporta como siempre. Cuando hay dos personas, el clic deja de
+   * aplicar y pasa a PROPONER: la otra aprueba o veta, y solo entonces el
+   * fármaco entra — en las dos pantallas a la vez.
+   */
+  const room = useRoom(roomId, (intervention) => controls?.apply(intervention));
+
+  const decide = (k: BranchKey) => {
+    if (room.shared) {
+      const b = branches.find((x) => x.key === k);
+      room.propose(k, b?.human ?? k);
+      return;
+    }
+    controls?.apply(k);
+  };
+
   return (
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
       <TopBar
         assess={assess}
         source={controls?.source ?? null}
         controls={controls}
+        room={room}
       />
       <FlowGuide phase={phase} />
 
       <div className="grid min-h-0 flex-1 grid-cols-[19.5rem_minmax(0,1fr)] gap-3 px-3 py-3">
-        <SideColumn vitals={vitals} assess={assess} history={history} />
+        <SideColumn vitals={vitals} history={history} />
         <Stage
           phase={phase}
           vitals={vitals}
@@ -171,9 +199,10 @@ export function MonitorScreen({
         assess={assess}
         onHover={setHovered}
         onAsk={setAsked}
-        onApply={(k: BranchKey) => controls?.apply(k)}
+        onApply={decide}
         applied={applied}
         arrested={arrested}
+        room={room}
       />
     </div>
   );
@@ -192,10 +221,12 @@ function TopBar({
   assess,
   source,
   controls,
+  room,
 }: {
   assess: Assessment;
   source: "backend" | "local" | null;
   controls: ReturnType<typeof usePatientState>["controls"];
+  room: RoomState;
 }) {
   const ui = STATUS_UI[assess.status];
   /**
@@ -305,6 +336,8 @@ function TopBar({
         </motion.span>
       </div>
 
+      <RoomPresence room={room} />
+
       <div className="flex items-center gap-2 border-l border-line pl-4">
         {source && (
           <span
@@ -373,13 +406,18 @@ function GhostButton({
 
 function SideColumn({
   vitals,
-  assess,
   history,
 }: {
   vitals: Vitals;
-  assess: Assessment;
   history: Vitals[];
 }) {
+  // Perfusión 0.78 → sin hallazgos; 0.30 → isquemia marcada. La curva del
+  // motor no es lineal, pero el mapeo a píxeles sí puede serlo.
+  const ischemia = Math.min(
+    1,
+    Math.max(0, (0.78 - vitals.perfusion_index) / 0.48),
+  );
+
   return (
     <div className="flex min-h-0 flex-col gap-3">
       <Panel
@@ -421,23 +459,39 @@ function SideColumn({
             hr={vitals.hr}
             rhythm={vitals.rhythm}
             amplitude={Math.min(1.15, Math.max(0.55, vitals.sv / 80))}
-            className="h-[2.9rem] w-full"
+            // La isquemia del trazado sale de la perfusión que calcula el
+            // motor. Empieza a notarse por debajo del 78% y satura en el
+            // 30%: es una traducción a píxeles, no un cálculo clínico.
+            ischemia={ischemia}
+            className="h-[3.4rem] w-full"
           />
         </div>
-        {/* Lo que el motor concluye, en una frase: antes había que deducirlo
-            de cinco números. Vive pegado al ECG para no gastar otro panel. */}
-        <div className="border-t border-line px-3 py-2">
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={assess.status}
-              initial={{ opacity: 0, y: 5 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -5 }}
-              transition={{ duration: 0.3 }}
-              className="text-micro leading-[1.5] text-lo"
-            >
-              {STATUS_UI[assess.status].note}
-            </motion.p>
+
+        {/* Los hallazgos, nombrados. Un trazado que cambia sin que nadie
+            diga qué cambió solo lo lee quien ya sabe leerlo. */}
+        <div className="flex flex-wrap gap-1 px-3 pb-1.5">
+          <AnimatePresence mode="popLayout">
+            {ecgFindings(ischemia, vitals.rhythm).map((f) => (
+              <motion.span
+                key={f}
+                layout
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 0.9 }}
+                transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
+                className="rounded border px-1.5 py-[0.1rem] text-micro"
+                style={{
+                  borderColor:
+                    f === "Sin alteraciones"
+                      ? "var(--line)"
+                      : "color-mix(in srgb, var(--crit) 32%, transparent)",
+                  color:
+                    f === "Sin alteraciones" ? "var(--text-lo)" : "var(--crit)",
+                }}
+              >
+                {f}
+              </motion.span>
+            ))}
           </AnimatePresence>
         </div>
       </Panel>
