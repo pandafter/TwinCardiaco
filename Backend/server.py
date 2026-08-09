@@ -25,13 +25,21 @@ import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+
+# El archivo local es la fuente autoritativa durante el hackathon. Si Windows
+# conserva una key antigua a nivel de usuario, no debe ganar silenciosamente
+# sobre la que el equipo acaba de configurar en Backend/.env. En despliegues
+# sin ese archivo, las variables inyectadas por la plataforma siguen intactas.
+load_dotenv(Path(__file__).with_name(".env"), override=True)
 
 from cardiotwin.sync import EventBus, PortalSync
 from cardiotwin.runtime import SimulationRuntime
@@ -42,7 +50,7 @@ from cardiotwin.physiology import PhysiologyEngine
 SIM_ID = os.environ.get("CARDIOTWIN_SIM_ID", "demo")
 TIME_SCALE = float(os.environ.get("CARDIOTWIN_TIME_SCALE", "8"))
 ASYSTOLE_GRACE_S = float(os.environ.get("CARDIOTWIN_ASYSTOLE_S", "120"))
-ASK_MODEL = os.environ.get("CARDIOTWIN_ASK_MODEL", "claude-sonnet-4-6")
+ASK_MODEL = os.environ.get("CARDIOTWIN_ASK_MODEL", "claude-opus-5")
 
 ctx: dict = {}
 
@@ -54,6 +62,7 @@ async def lifespan(app: FastAPI):
     bus = EventBus()
     session = aiohttp.ClientSession()
     portal = PortalSync(SIM_ID, session=session)
+    portal.start()
 
     runtime = SimulationRuntime(bus, portal=portal, time_scale=TIME_SCALE,
                                 asystole_grace_s=ASYSTOLE_GRACE_S)
@@ -70,7 +79,7 @@ async def lifespan(app: FastAPI):
     # El cliente se guarda en ctx para que /api/ask pueda reutilizarlo sin
     # crear una conexion por request.
     ctx.update(bus=bus, portal=portal, runtime=runtime, session=session,
-               llm=bool(client), client=client)
+               llm=bool(client), client=client, sse_clients=0)
 
     task = asyncio.create_task(runtime.run())
     print(f"[cardiotwin] runtime activo | portal={portal.enabled} "
@@ -80,6 +89,7 @@ async def lifespan(app: FastAPI):
     finally:
         runtime.stop()
         task.cancel()
+        await portal.close()
         await session.close()
 
 
@@ -102,6 +112,8 @@ async def health():
         "status": "ok",
         "portal": ctx["portal"].health(),
         "llm": ctx["llm"],
+        "sse_clients": ctx["sse_clients"],
+        "sse_subscribers": ctx["bus"].subscriber_count(),
         "agents": list(AGENTS.keys()),
         "time_scale": TIME_SCALE,
         "asystole_grace_s": ASYSTOLE_GRACE_S,
@@ -127,7 +139,8 @@ async def interventions():
 async def agents():
     return {"agents": [
         {"key": a.key, "name": a.name, "objective": a.objective,
-         "sees": a.sees, "blind_to": a.blind_to}
+         "sees": a.sees, "blind_to": a.blind_to,
+         "role": "voice" if a.voice else "tool"}
         for a in AGENTS.values()
     ]}
 
@@ -151,7 +164,7 @@ async def stream():
     cambias una linea en el front y sigues. Es barato y te salva de perder
     la presentacion por una caida de red ajena.
     """
-    queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+    queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
 
     async def handler(ev):
         try:
@@ -162,10 +175,22 @@ async def stream():
     ctx["bus"].on_any(handler)
 
     async def gen():
-        yield f": conectado\n\n"
-        while True:
-            ev = await queue.get()
-            yield f"event: {ev['type']}\ndata: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        ctx["sse_clients"] += 1
+        try:
+            yield ": conectado\n\n"
+            while True:
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
+                except asyncio.TimeoutError:
+                    # Comentario SSE: mantiene vivos proxies que cortan una
+                    # conexion silenciosa sin introducir eventos falsos.
+                    yield ": ping\n\n"
+                    continue
+                yield (f"event: {ev['type']}\n"
+                       f"data: {json.dumps(ev, ensure_ascii=False)}\n\n")
+        finally:
+            ctx["bus"].off_any(handler)
+            ctx["sse_clients"] = max(0, ctx["sse_clients"] - 1)
 
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
@@ -194,7 +219,8 @@ async def portal_token(req: TokenReq):
     if "error" in tok:
         raise HTTPException(502, tok["error"])
     return {
-        "token": tok,
+        "token": tok["token"],
+        "expires_at": tok.get("expiresAt"),
         "realtime_host": PortalSync.REALTIME_HOST,
         "channels": {
             "vitals": ctx["portal"].channel("vitals"),
@@ -349,6 +375,7 @@ REGLAS DURAS
 - NUNCA prediscas el resultado de la intervencion. Eso lo calcula el motor, no tu.
 - Lenguaje humano primero, sin jerga medica innecesaria.
 - Espanol de Colombia, directo, sin adornos.
+- No incluyas etiquetas XML internas o de sistema en tu respuesta.
 
 RESPUESTA (JSON estricto, sin markdown, sin explicaciones fuera del JSON):
 {"reading": "1-2 frases sobre lo que le esta pasando al paciente ahora",
@@ -423,6 +450,8 @@ async def ask(req: AskReq):
     try:
         r = await client.messages.create(
             model=ASK_MODEL, max_tokens=600,
+            thinking={"type": "disabled"},
+            output_config={"effort": "low"},
             system=ASK_SYSTEM,
             messages=[{"role": "user", "content": user}],
         )
