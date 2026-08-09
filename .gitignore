@@ -1,6 +1,9 @@
 # Python
 __pycache__/
 *.py[cod]
+build/
+dist/
+*.egg-info/
 
 # Entornos virtuales
 .venv/
@@ -9,4 +12,7 @@ venv/
 # Secretos locales
 .env
 .env.local
+
+# Vercel local metadata
+.vercel/
 
