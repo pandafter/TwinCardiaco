@@ -9,6 +9,12 @@
       "root": "Backend/",
       "framework": "fastapi",
       "entrypoint": "server:app",
+      "functions": {
+        "server.py": {
+          "memory": 1024,
+          "maxDuration": 300
+        }
+      },
       "routes": [
         {
           "src": "/backend/(.*)",
@@ -21,12 +27,6 @@
           ]
         }
       ]
-    }
-  },
-  "functions": {
-    "Backend/server.py": {
-      "memory": 1024,
-      "maxDuration": 300
     }
   },
   "rewrites": [
