@@ -115,6 +115,21 @@ class PatientStore {
   /* ------------------------------------------------------------- backend */
 
   private onBackendFrame(f: Frame, raw: BackendVitals) {
+    // Detecta reset del backend (el `/api/scenario/reset` o `/preset` crea un
+    // motor nuevo con t=0). Si el nuevo tick trae un sim_time MENOR que el
+    // ultimo del buffer, el paciente se reinicio y hay que descartar la
+    // historia vieja. Sin este check, la curva engancha samples de t=200 con
+    // samples de t=0 y el path SVG dibuja los picos verticales locos que se
+    // veian tras cada reinicio.
+    const last = this.history[this.history.length - 1];
+    if (last && raw.t + 0.5 < last.t) {
+      this.history = [];
+      this.applied = null;
+      this.conflict = null;
+      this.consensus = null;
+      this.simulation = null;
+      this.agents.clear();
+    }
     this.frame = f;
     this.history.push(f.vitals);
     if (this.history.length > 600) this.history.shift();
@@ -179,12 +194,16 @@ class PatientStore {
     this.consensus = null;
     this.simulation = null;
     this.agents.clear();
+    // Se limpia SIEMPRE, no solo en modo local. Antes solo se vaciaba en
+    // local y el backend hacia su reset por su lado; el buffer del front
+    // sobrevivia con samples antiguos y la curva iba de t=200 a t=0 con
+    // picos verticales al reconectar los puntos.
+    this.history = [];
     if (this.source === "backend") {
       void resetCase();
     } else {
       this.engine = new Engine();
       this.frame = this.engine.step(0.25);
-      this.history = [];
     }
     this.paused = false;
     this.notify();

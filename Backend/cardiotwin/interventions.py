@@ -163,6 +163,21 @@ INTERVENTIONS: Dict[str, Intervention] = {
 def assess_state(s: PhysioState) -> dict:
     """Clasifica el estado hemodinamico y lista los criterios cumplidos."""
     v = s.vitals()
+
+    # Paro cardiaco: pisa cualquier otro criterio. Ningun agente ni umbral
+    # tiene sentido cuando no hay ritmo, y la UI debe pintar una linea plana
+    # sin ambiguedad.
+    if s.asystole:
+        return {
+            "status": "asystole",
+            "label": "ASISTOLIA",
+            "critical_criteria": ["Paro cardiaco: sin ritmo, sin gasto."],
+            "instability_criteria": [],
+            "hemodynamic_phenotype": "asistolia",
+            "perfusion_index": v["perfusion_index"],
+            "vitals": v,
+        }
+
     crit, unstable = [], []
 
     if v["map"] < CRITICAL_THRESHOLDS["map_min"]:
@@ -228,6 +243,9 @@ def time_to_critical(engine: PhysiologyEngine, horizon_s: float = 3600.0,
     supuesto de que el insulto sigue igual. Rotulalo asi en la interfaz.
     """
     sim = engine.clone()
+    # En asistolia ya no hay trayectoria: el paciente no cruza nada mas.
+    if sim.s.asystole:
+        return 0.0
     # Si YA esta critico, el tiempo restante es cero. Sin esta guarda la
     # funcion devolvia None (= "no cruza") para un paciente ya critico,
     # que es el peor falso negativo posible en esta interfaz.

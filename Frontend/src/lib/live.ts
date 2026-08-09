@@ -62,8 +62,12 @@ export type BackendVitals = {
 };
 
 export type BackendTransition = {
-  from: Status;
-  to: Status;
+  // El backend emite strings crudos ("stable"|"unstable"|"critical"|"asystole");
+  // la traduccion al Status del front (que llama "arrest" a la asistolia)
+  // ocurre en `toAssessment`. Tipar como string aqui evita que TS tape el
+  // caso "asystole" antes de que llegue al mapper.
+  from: string;
+  to: string;
   label: string;
   criteria: string[];
   phenotype: string | null;
@@ -128,6 +132,18 @@ const RHYTHM: Record<string, Rhythm> = {
   "taquicardia sinusal severa": "sinus_tach",
   "bradicardia sinusal": "sinus",
   afib_rvr: "afib_rvr",
+  // El backend emite "asistolia" cuando entra en paro; el EcgStrip pinta
+  // linea plana solo si el ritmo llega como "asystole".
+  asistolia: "asystole",
+};
+
+/** Mapea el status crudo del backend al Status del front (asystole -> arrest). */
+const STATUS: Record<string, Status> = {
+  stable: "stable",
+  unstable: "unstable",
+  critical: "critical",
+  asystole: "arrest",
+  arrest: "arrest",
 };
 
 /** Traduce un `vitals.tick` al tipo que la UI ya usa. Sin derivar nada. */
@@ -166,16 +182,22 @@ export function toAssessment(
   b: BackendVitals,
   last: BackendTransition | null,
 ): Assessment {
+  const status: Status = last ? (STATUS[last.to] ?? "stable") : "stable";
+  // El ritmo del backend "asistolia" tambien sirve como pista tardia si
+  // llega un tick antes que la transicion: garantiza que el UI marque paro
+  // sin depender del orden de los eventos SSE.
+  const arrestByRhythm = b.rhythm === "asistolia";
+  const finalStatus: Status = arrestByRhythm ? "arrest" : status;
   return {
-    status: last?.to ?? "stable",
-    label: last?.label ?? "ESTABLE",
-    critical_criteria: last?.to === "critical" ? (last?.criteria ?? []) : [],
-    instability_criteria: last?.to === "unstable" ? (last?.criteria ?? []) : [],
+    status: finalStatus,
+    label: last?.label ?? (arrestByRhythm ? "ASISTOLIA" : "ESTABLE"),
+    critical_criteria: finalStatus === "critical" ? (last?.criteria ?? []) : [],
+    instability_criteria: finalStatus === "unstable" ? (last?.criteria ?? []) : [],
     hemodynamic_phenotype: last?.phenotype ?? null,
     time_to_critical_s: last?.time_to_critical_s ?? null,
-    // El backend todavía no lo emite. Se deja en null y la UI lo oculta, en
-    // vez de derivarlo aquí: el front no calcula fisiología.
-    time_to_arrest_s: null,
+    // Cuando el status pasa a arrest, el tiempo hasta paro ya no tiene
+    // sentido: es 0. En el resto se deja null y la UI lo oculta.
+    time_to_arrest_s: finalStatus === "arrest" ? 0 : null,
     // vienen del servidor o no se muestran: el front no los deriva
     deterioration_risk: b.deterioration_risk ?? 0,
     trend: b.trend ?? "steady",
@@ -339,3 +361,22 @@ export const ask = (question: string) =>
 export const resetCase = () => post<unknown>("/api/scenario/reset", {});
 export const triggerShock = (type = "cardiogenic", severity = 1) =>
   post<unknown>("/api/scenario/shock", { type, severity });
+
+/**
+ * Configura el paciente al arrancar un caso clinico. Resetea el motor y
+ * aplica el preset que envia la pantalla de seleccion (patologia, severidad
+ * y opcionales de FC / contractilidad / lactato). Todos los campos son
+ * opcionales; snake_case porque el backend usa Pydantic.
+ */
+export type ScenarioPresetBody = {
+  shock_type?: string;
+  severity?: number;
+  heart_rate?: number;
+  hr_baseline?: number;
+  contractility?: number;
+  hemoglobin?: number;
+  lactate?: number;
+};
+
+export const startScenario = (body: ScenarioPresetBody) =>
+  post<{ ok: boolean }>("/api/scenario/preset", body);

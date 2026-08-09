@@ -132,6 +132,11 @@ class PhysioState:
     shock_type: ShockType = "none"
     shock_severity: float = 0.0
 
+    # --- Paro. Se dispara desde el runtime cuando el paciente lleva demasiado
+    #     tiempo critico sin intervencion. Una vez True, el motor deja de
+    #     bombear y ninguna intervencion revive: la demo pide un reset.
+    asystole: bool = False
+
     def as_dict(self) -> dict:
         return {k: (round(v, 4) if isinstance(v, float) else v)
                 for k, v in asdict(self).items()}
@@ -255,6 +260,19 @@ class PhysiologyEngine:
 
         s.rhythm = self._rhythm(eff_hr)
 
+        # --- Paro cardiaco. Se aplica AL FINAL para pisar todo lo demas: sin
+        #     bombeo, `map` y `pcwp` seguiran cayendo por si solos en step()
+        #     porque q_sys drena arterial->venoso mientras CO=0.
+        if s.asystole:
+            s.heart_rate = 0.0
+            s.stroke_volume = 0.0
+            s.cardiac_output = 0.0
+            s.cardiac_index = 0.0
+            s.pulse_pressure = 0.0
+            s.sbp = s.map
+            s.dbp = s.map
+            s.rhythm = "asistolia"
+
     @staticmethod
     def _rhythm(hr: float) -> str:
         if hr > 150: return "taquicardia sinusal severa"
@@ -284,7 +302,9 @@ class PhysiologyEngine:
         # --- Barorreflejo. Produce el shock COMPENSADO (MAP casi normal
         #     con lactato ya subiendo) y hace que el colapso parezca subito
         #     cuando la compensacion se agota.
-        if self.baroreflex:
+        #     En asistolia no aplica: el simpatico no puede reactivar un
+        #     corazon parado y dejarlo intentarlo haria "revivir" la FC.
+        if self.baroreflex and not s.asystole:
             err = MAP_SETPOINT - s.map
             hr_t = _bound(self._hr_base + 1.30 * err, 45.0, 170.0)
             svr_t = _bound(self._svr_base + 18.0 * err, 450.0, 2400.0)
@@ -355,6 +375,22 @@ class PhysiologyEngine:
     def trigger_shock(self, shock_type: ShockType, severity: float = 1.0) -> None:
         self.s.shock_type = shock_type
         self.s.shock_severity = _bound(severity, 0.0, 5.0)
+
+    def enter_asystole(self) -> None:
+        """
+        Colapso electrico. Se dispara desde el runtime cuando el paciente
+        lleva demasiado tiempo critico sin intervencion.
+
+        Fija FC y contractilidad a cero y deja que _recompute propague el
+        colapso al resto de las variables. A partir de aqui las intervenciones
+        no revierten el paro: la demo pide un reset.
+        """
+        self.s.asystole = True
+        self.s.heart_rate = 0.0
+        self.s.drug_hr = 0.0
+        self.s.contractility = 0.0
+        self.s.drug_contractility = 0.0
+        self._recompute()
 
     def clone(self) -> "PhysiologyEngine":
         """Copia independiente. Base de las proyecciones what-if."""

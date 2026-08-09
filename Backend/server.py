@@ -41,6 +41,8 @@ from cardiotwin.physiology import PhysiologyEngine
 
 SIM_ID = os.environ.get("CARDIOTWIN_SIM_ID", "demo")
 TIME_SCALE = float(os.environ.get("CARDIOTWIN_TIME_SCALE", "8"))
+ASYSTOLE_GRACE_S = float(os.environ.get("CARDIOTWIN_ASYSTOLE_S", "120"))
+ASK_MODEL = os.environ.get("CARDIOTWIN_ASK_MODEL", "claude-sonnet-4-6")
 
 ctx: dict = {}
 
@@ -53,7 +55,8 @@ async def lifespan(app: FastAPI):
     session = aiohttp.ClientSession()
     portal = PortalSync(SIM_ID, session=session)
 
-    runtime = SimulationRuntime(bus, portal=portal, time_scale=TIME_SCALE)
+    runtime = SimulationRuntime(bus, portal=portal, time_scale=TIME_SCALE,
+                                asystole_grace_s=ASYSTOLE_GRACE_S)
 
     client = None
     if os.environ.get("ANTHROPIC_API_KEY"):
@@ -64,8 +67,10 @@ async def lifespan(app: FastAPI):
             pass
     runtime.orchestrator = Orchestrator(bus, client=client)
 
+    # El cliente se guarda en ctx para que /api/ask pueda reutilizarlo sin
+    # crear una conexion por request.
     ctx.update(bus=bus, portal=portal, runtime=runtime, session=session,
-               llm=bool(client))
+               llm=bool(client), client=client)
 
     task = asyncio.create_task(runtime.run())
     print(f"[cardiotwin] runtime activo | portal={portal.enabled} "
@@ -99,6 +104,8 @@ async def health():
         "llm": ctx["llm"],
         "agents": list(AGENTS.keys()),
         "time_scale": TIME_SCALE,
+        "asystole_grace_s": ASYSTOLE_GRACE_S,
+        "asystole": ctx["runtime"].engine.s.asystole,
         "disclaimer": ("Modelo de simulacion no validado. No es una "
                        "herramienta clinica."),
     }
@@ -221,7 +228,62 @@ async def reset():
     rt.engine = PhysiologyEngine()
     rt._last_status = "stable"
     rt._last_published.clear()
+    rt._critical_since = None
     ctx["bus"].log.clear()
+    return {"ok": True, "state": rt.state()}
+
+
+class PresetReq(BaseModel):
+    """
+    Configuracion inicial de un caso. Todos los campos son opcionales: solo
+    lo que venga se aplica sobre el estado por defecto tras el reset. Sirve
+    para arrancar la simulacion en el punto donde empieza el caso clinico
+    (post-IAM, TSV, choque establecido, etc.) en vez de siempre en un
+    paciente sano.
+    """
+    shock_type: Optional[str] = None       # none|cardiogenic|hypovolemic|septic
+    severity: float = 0.0
+    heart_rate: Optional[float] = None     # FC de arranque
+    hr_baseline: Optional[float] = None    # setpoint del barorreflejo (para TSV)
+    contractility: Optional[float] = None  # fraccion de lo normal (0.1-1.5)
+    hemoglobin: Optional[float] = None     # g/dL (5-18)
+    lactate: Optional[float] = None        # mmol/L de arranque
+
+
+@app.post("/api/scenario/preset")
+async def preset(req: PresetReq):
+    """
+    Resetea el paciente y aplica una configuracion inicial coherente con
+    un caso clinico. Es lo que llama la pantalla de seleccion de paciente
+    cuando el usuario da "Iniciar simulacion".
+    """
+    rt = ctx["runtime"]
+    rt.engine = PhysiologyEngine()
+    rt._last_status = "stable"
+    rt._last_published.clear()
+    rt._critical_since = None
+    ctx["bus"].log.clear()
+
+    s = rt.engine.s
+    if req.heart_rate is not None:
+        s.heart_rate = max(20.0, min(220.0, float(req.heart_rate)))
+    if req.hr_baseline is not None:
+        # El baseline del barorreflejo: sin esto, cualquier HR inicial alta
+        # decae en segundos porque el barostato la corrige. Levantar el
+        # baseline es como aproximamos taquiarritmia sin remodelar el motor.
+        rt.engine._hr_base = max(30.0, min(200.0, float(req.hr_baseline)))
+    if req.contractility is not None:
+        s.contractility = max(0.10, min(1.50, float(req.contractility)))
+    if req.hemoglobin is not None:
+        s.hemoglobin = max(5.0, min(18.0, float(req.hemoglobin)))
+    if req.lactate is not None:
+        s.lactate = max(0.4, min(20.0, float(req.lactate)))
+    if req.shock_type and req.shock_type != "none":
+        if req.shock_type not in ("cardiogenic", "hypovolemic", "septic"):
+            raise HTTPException(400, f"Shock desconocido: {req.shock_type}")
+        rt.engine.trigger_shock(req.shock_type, req.severity)
+
+    rt.engine._recompute()
     return {"ok": True, "state": rt.state()}
 
 
@@ -256,6 +318,145 @@ class WhatIfReq(BaseModel):
 async def whatif(req: WhatIfReq):
     """Ramas what-if. Corre en thread aparte: no congela el monitor."""
     return await ctx["runtime"].run_whatif(req.interventions, req.horizon_s)
+
+
+class AskReq(BaseModel):
+    question: str
+    # El front puede mandar su propio snapshot (mismo shape que PatientSnapshot
+    # del Next route) o dejarlo vacio y usamos el estado autoritativo del
+    # motor. Con state vacio la respuesta habla del "ahora" del servidor,
+    # que es lo correcto cuando la pregunta viene fuera del monitor.
+    state: Optional[dict] = None
+
+
+ASK_SYSTEM = """Eres el interprete clinico de un simulador de shock cardiogenico. Trabajas para alguien que NO es medico.
+
+QUE SIMULA ESTE MODELO
+Un corazon que falla como bomba. Solo cuatro intervenciones:
+- inotrope: dobutamina. Refuerza la fuerza de contraccion. Sube el gasto cardiaco.
+- vasopressor: noradrenalina. Sube la resistencia vascular. Sube la presion, pero al subir la poscarga puede reducir el volumen que el corazon expulsa.
+- fluid: bolo de 500 mL. Aumenta la precarga.
+- none: no intervenir.
+
+Cualquier otra cosa (tromboliticos, cateterismo, stent, ECMO, balon, ventilacion, intubacion, cardioversion, desfibrilacion, antibioticos, transfusion, marcapasos) esta FUERA del alcance: usa "out_of_scope" y dilo sin rodeos.
+
+TU TRABAJO
+1. Leer el estado que te dan y decir que le esta pasando al paciente AHORA (campo "reading").
+2. Traducir la pregunta a los parametros del motor.
+
+REGLAS DURAS
+- NUNCA inventes una cifra. Usa solo los numeros del estado que te paso.
+- NUNCA prediscas el resultado de la intervencion. Eso lo calcula el motor, no tu.
+- Lenguaje humano primero, sin jerga medica innecesaria.
+- Espanol de Colombia, directo, sin adornos.
+
+RESPUESTA (JSON estricto, sin markdown, sin explicaciones fuera del JSON):
+{"reading": "1-2 frases sobre lo que le esta pasando al paciente ahora",
+ "intervention": "inotrope|vasopressor|fluid|none|out_of_scope",
+ "efficacy": 0.0-1.5,
+ "delay_s": 0-120,
+ "echo": "1 frase confirmando que entendiste la pregunta",
+ "reason": "solo si out_of_scope: por que no aplica"}"""
+
+
+def _snapshot_for_ask(state_dict: dict) -> str:
+    """
+    Convierte el snapshot (venga del front o del propio motor) al texto
+    etiquetado que el modelo lee mejor que un JSON crudo.
+    """
+    s = state_dict
+    ttc = s.get("time_to_critical_s")
+    applied = s.get("applied") or []
+    return (
+        f"ESTADO ACTUAL DEL PACIENTE (medido por el motor, segundo "
+        f"{round(s.get('t', 0))} del caso):\n"
+        f"- Pulso: {round(s.get('hr', 0))} lpm\n"
+        f"- Sangre bombeada (gasto cardiaco): {float(s.get('co', 0)):.1f} L/min\n"
+        f"- Presion arterial: {round(s.get('sbp', 0))}/{round(s.get('dbp', 0))} mmHg\n"
+        f"- Presion de bombeo (MAP): {round(s.get('map', 0))} mmHg\n"
+        f"- Oxigeno en sangre (SpO2): {round(s.get('spo2', 0))}%\n"
+        f"- Lactato: {float(s.get('lactate', 0)):.1f} mmol/L\n"
+        f"- Perfusion tisular: {round(s.get('perfusion_pct') or s.get('perfusion_index', 1) * 100)}%\n"
+        f"- Estado global: {s.get('label') or s.get('status') or 'sin clasificar'}\n"
+        + (f"- Tiempo proyectado hasta estado critico: {round(ttc)} s\n" if ttc else "")
+        + (f"- Ya se aplico: {', '.join(applied)}\n" if applied else "- Todavia no se ha intervenido\n")
+    )
+
+
+def _snapshot_from_engine() -> dict:
+    """Fallback si el front no manda state: usamos el estado autoritativo."""
+    st = ctx["runtime"].state()
+    v = st["vitals"]
+    return {
+        "t": v["t"], "hr": v["hr"], "sbp": v["sbp"], "dbp": v["dbp"],
+        "map": v["map"], "co": v["co"], "spo2": v["spo2"],
+        "lactate": v["lactate"],
+        "perfusion_pct": v["perfusion_index"] * 100,
+        "status": st["status"], "label": st["label"],
+        "applied": [],
+    }
+
+
+@app.post("/api/ask")
+async def ask(req: AskReq):
+    """
+    Traduce una pregunta en lenguaje natural a parametros del motor.
+
+    Este endpoint espeja el contrato de la ruta Next `/api/ask` para que el
+    front pueda apuntar a cualquiera de los dos: el Next route llama a
+    Claude desde el edge, este lo hace desde el mismo proceso que corre la
+    fisiologia. Ventaja de esta ruta: el modelo lee el estado autoritativo
+    del motor, no una foto que pudo quedar desfasada en el viaje al browser.
+    """
+    client = ctx.get("client")
+    if client is None:
+        raise HTTPException(
+            503, "IA no disponible en el backend (falta ANTHROPIC_API_KEY)")
+
+    question = (req.question or "").strip()
+    if not question:
+        raise HTTPException(400, "missing-question")
+
+    snap = req.state or _snapshot_from_engine()
+    user = f"{_snapshot_for_ask(snap)}\nPREGUNTA: {question}"
+
+    try:
+        r = await client.messages.create(
+            model=ASK_MODEL, max_tokens=600,
+            system=ASK_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        )
+        text = "".join(b.text for b in r.content if b.type == "text").strip()
+        # Anthropic a veces envuelve el JSON en ```json ... ``` a pesar de
+        # pedir "sin markdown": lo pelamos antes de parsear.
+        if text.startswith("```"):
+            text = text.strip("`")
+            if text.startswith("json"):
+                text = text[4:]
+        out = json.loads(text.strip())
+    except Exception as e:                                     # noqa: BLE001
+        raise HTTPException(502, f"IA fallo: {type(e).__name__}")
+
+    if out.get("intervention") == "out_of_scope":
+        return {
+            "supported": False,
+            "reason": out.get("reason") or (
+                "Este gemelo no simula eso. Modela cuatro intervenciones "
+                "sobre un corazon que falla como bomba."),
+            "reading": out.get("reading", ""),
+            "source": "llm",
+        }
+
+    return {
+        "supported": True,
+        "intervention": out.get("intervention", "none"),
+        # El schema no puede acotar rangos: se acotan aqui, igual que en Next.
+        "efficacy": max(0.0, min(1.5, float(out.get("efficacy", 1.0)))),
+        "delay_s": max(0, min(120, int(out.get("delay_s", 30)))),
+        "echo": out.get("echo", ""),
+        "reading": out.get("reading", ""),
+        "source": "llm",
+    }
 
 
 @app.post("/api/deliberate")

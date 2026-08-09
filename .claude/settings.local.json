@@ -1,0 +1,40 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(python3:*)",
+      "Bash(py:*)",
+      "Bash(pip:*)",
+      "Bash(uvicorn:*)",
+      "Bash(npm:*)",
+      "Bash(npx:*)",
+      "Bash(node:*)",
+      "Bash(curl:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(kill:*)",
+      "PowerShell(python:*)",
+      "PowerShell(py:*)",
+      "PowerShell(pip:*)",
+      "PowerShell(uvicorn:*)",
+      "PowerShell(npm:*)",
+      "PowerShell(npx:*)",
+      "PowerShell(node:*)",
+      "PowerShell(curl:*)",
+      "PowerShell(Invoke-WebRequest:*)",
+      "PowerShell(Invoke-RestMethod:*)",
+      "PowerShell(Get-Process:*)",
+      "PowerShell(Stop-Process:*)",
+      "PowerShell(Start-Process:*)",
+      "PowerShell(Get-Content:*)",
+      "PowerShell(Get-ChildItem:*)",
+      "PowerShell(Test-NetConnection:*)",
+      "PowerShell(& *.venv*python.exe*)",
+      "PowerShell(& *.venv*uvicorn.exe*)",
+      "PowerShell(*Activate.ps1*)"
+    ]
+  }
+}

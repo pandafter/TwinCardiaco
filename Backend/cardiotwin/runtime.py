@@ -37,19 +37,27 @@ WATCHED = {"map": 0.12, "co": 0.15, "lactate": 0.20,
 AGENT_DEBOUNCE_S = 3.0
 IDLE_RECONSENSUS_S = 30.0
 
+# Segundos de tiempo FISIOLOGICO que el paciente puede pasar en estado
+# critico sin intervencion antes de entrar en asistolia. Con time_scale=8
+# esto son unos 15 s de reloj de pared: suficiente para dar susto sin que
+# la demo se pierda si el ponente se queda callado 5 s.
+DEFAULT_ASYSTOLE_GRACE_S = 120.0
+
 
 class SimulationRuntime:
     """Dueño unico del motor de fisiologia. Los clientes nunca simulan local."""
 
     def __init__(self, bus: EventBus, portal: Optional[PortalSync] = None,
                  physics_hz: float = 20.0, publish_hz: float = 1.0,
-                 time_scale: float = 1.0):
+                 time_scale: float = 1.0,
+                 asystole_grace_s: float = DEFAULT_ASYSTOLE_GRACE_S):
         self.engine = PhysiologyEngine()
         self.bus = bus
         self.portal = portal
         self.physics_dt = 1.0 / physics_hz
         self.publish_period = 1.0 / publish_hz
         self.time_scale = time_scale
+        self.asystole_grace_s = asystole_grace_s
 
         self.running = False
         self._last_status = "stable"
@@ -57,6 +65,11 @@ class SimulationRuntime:
         self._last_agent_wake = 0.0
         self._agent_task: Optional[asyncio.Task] = None
         self.orchestrator = None          # se inyecta desde agents.py
+
+        # Marca de cuando el paciente entro por ultima vez en estado critico
+        # SIN intervencion posterior. Se pone en la transicion a critical y
+        # se limpia al salir de critical o al aplicar cualquier intervencion.
+        self._critical_since: Optional[float] = None
 
         if portal:
             self.bus.on_any(portal.publish)
@@ -117,6 +130,38 @@ class SimulationRuntime:
             }, sim_time=self.engine.s.t)
             wake_reason = f"transicion {prev} -> {a['status']}"
 
+            # Timer de gracia hacia asistolia: arranca al entrar en critical,
+            # se limpia al salir por cualquier razon distinta (incluso a
+            # asystole, para que no doble-dispare).
+            if a["status"] == "critical":
+                self._critical_since = self.engine.s.t
+            else:
+                self._critical_since = None
+
+        # Asistolia por hipoperfusion prolongada. Si el paciente lleva
+        # `asystole_grace_s` en critical sin que nadie intervenga, colapsa.
+        # Es LA razon por la que el demo tiene tension: no actuar es una
+        # decision con consecuencia.
+        if (self._critical_since is not None
+                and not self.engine.s.asystole
+                and self.engine.s.t - self._critical_since >= self.asystole_grace_s):
+            grace = round(self.engine.s.t - self._critical_since, 1)
+            self._critical_since = None
+            self.engine.enter_asystole()
+            prev = self._last_status
+            self._last_status = "asystole"
+            await self.bus.emit("state.transition", {
+                "from": prev, "to": "asystole", "label": "ASISTOLIA",
+                "criteria": [f"Sin intervencion durante {grace:.0f}s en estado critico."],
+                "phenotype": "asistolia",
+                "time_to_critical_s": 0.0,
+                "projection_disclaimer": (
+                    "Colapso electrico por hipoperfusion prolongada. "
+                    "Trayectoria del modelo, no prediccion clinica."),
+                "vitals": self.engine.s.vitals(),
+            }, sim_time=self.engine.s.t)
+            wake_reason = "asistolia"
+
         # Cruce brusco de variable vigilada
         for k, thr in WATCHED.items():
             cur = v.get(k)
@@ -170,6 +215,22 @@ class SimulationRuntime:
         """
         if key not in INTERVENTIONS:
             return {"error": f"Intervencion desconocida: {key}"}
+
+        # Un corazon en asistolia no responde a farmacos ni volumen. En vez
+        # de aplicar en silencio y confundir al usuario, se anuncia la
+        # futilidad como evento y se rechaza. El reset del caso es la salida.
+        if self.engine.s.asystole:
+            await self.bus.emit("intervention.futile", {
+                "intervention": key,
+                "actor": actor,
+                "reason": "Paciente en asistolia. Reset del caso para intentar de nuevo.",
+            }, sim_time=self.engine.s.t)
+            return {"error": "El paciente esta en asistolia. Aplicar intervenciones ya no cambia el desenlace."}
+
+        # Cualquier intervencion cuenta como "actuar": reinicia el reloj de
+        # gracia hacia asistolia. Aplicar dobutamina reactiva la ventana
+        # aunque siga critical porque el usuario esta enganchado con el caso.
+        self._critical_since = None
 
         before = assess_state(self.engine.s)["vitals"]
         INTERVENTIONS[key].apply(self.engine, dose)
