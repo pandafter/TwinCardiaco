@@ -16,3 +16,5 @@ venv/
 # Vercel local metadata
 .vercel/
 
+.vercel
+.env*
