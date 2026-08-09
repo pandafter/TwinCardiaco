@@ -165,7 +165,8 @@ export function MonitorScreen({
     <div className="flex h-full w-full flex-col overflow-hidden bg-page">
       <TopBar
         assess={assess}
-        source={controls?.source ?? null}
+        transport={controls?.transport ?? null}
+        connected={controls?.connected ?? 0}
         controls={controls}
         room={room}
       />
@@ -180,11 +181,14 @@ export function MonitorScreen({
           history={history}
           agents={agents}
           agentsSource={llmAgents ? "llm" : llmBusy ? "pending" : "local"}
+          debate={fromBackend ? backend!.debate : null}
+          onConvene={() => controls?.convene()}
           branches={branches}
           projection={projection}
           applied={applied.length ? applied[applied.length - 1] : null}
           pinned={pinned}
           onPin={setPinned}
+          transport={controls?.transport ?? null}
         />
       </div>
 
@@ -219,12 +223,14 @@ export function MonitorScreen({
  */
 function TopBar({
   assess,
-  source,
+  transport,
+  connected,
   controls,
   room,
 }: {
   assess: Assessment;
-  source: "backend" | "local" | null;
+  transport: "portal" | "sse" | "local" | null;
+  connected: number;
   controls: ReturnType<typeof usePatientState>["controls"];
   room: RoomState;
 }) {
@@ -339,21 +345,29 @@ function TopBar({
       <RoomPresence room={room} />
 
       <div className="flex items-center gap-2 border-l border-line pl-4">
-        {source && (
+        {transport && (
           <span
             className="rounded border px-2 py-[0.2rem] text-micro"
             title={
-              source === "backend"
-                ? "Los datos vienen del motor 0D del servidor"
-                : "El servidor no responde: corriendo con el motor local de respaldo"
+              transport === "portal"
+                ? "Estado compartido por Portal en tiempo real"
+                : transport === "sse"
+                  ? "Portal no está disponible: respaldo SSE activo"
+                  : "El servidor no responde: motor local de respaldo"
             }
             style={
-              source === "backend"
+              transport === "portal"
                 ? { borderColor: "rgba(63,191,127,0.35)", color: "var(--ok)" }
-                : { borderColor: "var(--line-strong)", color: "var(--text-lo)" }
+                : transport === "sse"
+                  ? { borderColor: "rgba(213,165,57,0.4)", color: "var(--warn)" }
+                  : { borderColor: "var(--line-strong)", color: "var(--text-lo)" }
             }
           >
-            {source === "backend" ? "servidor" : "local"}
+            {transport === "portal"
+              ? `PORTAL · ${connected} viendo`
+              : transport === "sse"
+                ? "SSE · respaldo"
+                : "LOCAL · sin servidor"}
           </span>
         )}
         {controls && (
@@ -493,6 +507,15 @@ function SideColumn({
               </motion.span>
             ))}
           </AnimatePresence>
+          <a
+            href="https://physionet.org/content/mitdb/1.0.0/"
+            target="_blank"
+            rel="noreferrer"
+            title="Morfología QRS derivada de MIT-BIH Arrhythmia Database v1.0.0"
+            className="ml-auto self-center text-[0.55rem] text-dim transition-colors hover:text-lo"
+          >
+            QRS · MIT-BIH/PhysioNet
+          </a>
         </div>
       </Panel>
     </div>
