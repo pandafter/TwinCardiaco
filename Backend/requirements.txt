@@ -4,4 +4,5 @@ numba>=0.58
 fastapi>=0.110
 uvicorn[standard]>=0.29
 aiohttp>=3.9
-anthropic>=0.40
+anthropic>=0.116
+python-dotenv>=1.0

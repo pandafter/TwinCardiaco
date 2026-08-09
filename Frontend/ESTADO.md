@@ -60,7 +60,7 @@ HMR se cae y la página queda con estilos parciales — el grid no aplica y los
 elementos `absolute` se posicionan contra el viewport. Parece un bug de
 layout y no lo es.
 
-Rutas: `/` (selección de paciente), `/monitor`, `/compare`, `/response`.
+Rutas de demo: `/` (selección de paciente) y `/monitor`.
 
 `/monitor?sala=uci-3` abre la **sesión compartida**. Para probarla sin un
 segundo computador: dos ventanas de incógnito distintas (la identidad vive
@@ -150,7 +150,7 @@ perfusión. `EcgStrip` genera sus complejos según la frecuencia.
   no hay ningún campo donde escribir una cifra inventada.
 - `POST /api/agents` — TRES llamadas, no una que devuelva tres opiniones.
   Cada especialista corre con su system prompt y una vista FILTRADA del
-  estado, así que el desacuerdo nace de que miran cosas distintas. Los dos
+  estado, así que el desacuerdo nace de que miran cosas distintas. Los tres
   en paralelo; el orquestador después, porque los lee. Se pide una vez por
   hito (cambio de estado o decisión tomada), no por tick.
 
@@ -158,10 +158,11 @@ perfusión. `EcgStrip` genera sus complejos según la frecuencia.
 contrato. Si no hay key, si la red falla o si el modelo declina, se cae a
 esas reglas y la UI marca la fuente (`IA` / `reglas locales`).
 
-**Por qué no el backend de Python**: corre Python 3.9.6 sin fastapi, numpy,
-scipy ni numba instalados; su `Orchestrator` todavía rostrea `farmacologia`
-(el agente que el front eliminó) y apunta a `claude-sonnet-4-6`, un ID que
-no existe. La ruta de Next no depende de nada de eso.
+**Backend de Python activo**: corre en el `.venv` con Python 3.11+ y FastAPI.
+El `Orchestrator` transmite propuestas, réplicas y veredicto por eventos
+ordenados; usa `claude-opus-5` cuando hay clave y las mismas reglas
+deterministas cuando el modelo o la red no están disponibles. SSE es el
+respaldo directo de Portal y el monitor puede continuar con el motor local.
 
 **`lib/whatif.ts`**: cuatro ramas (`none`, `inotrope`, `vasopressor`, `fluid`)
 con nombres humanos y veredicto en una frase sin jerga. Se precalculan y se
@@ -213,7 +214,7 @@ node scripts/calibrate-intervention.ts # respuesta a cada fármaco
 node scripts/calibrate-scenarios.ts    # las tres ramas comparadas
 node scripts/calibrate-arrest.ts       # cuándo para el corazón, con y sin intervenir
 node scripts/check-room.mjs            # la sesión compartida, con dos navegadores
-node scripts/console-check.mjs / /monitor /compare   # errores del navegador por ruta
+node scripts/console-check.mjs / /monitor            # errores del navegador por ruta
 node scripts/icon-catalog.mjs          # los 45 iconos a design/icons.png
 npm run shot                           # captura a 1840×1230 + recortes por zona
 ```
@@ -271,15 +272,9 @@ rutas, y una captura mirada de verdad.
 
 Del lado del **frontend**:
 
-1. Verificar el SSE contra el backend corriendo de verdad. Está escrito y
-   degrada bien sin él, pero nunca se ha probado con datos reales.
-2. **`/compare` y `/response` ya no están enlazadas desde ninguna parte**
-   (se borró `shell/Shell.tsx`, que era el único sitio con ese nav y además
-   no lo importaba nadie). Siguen accesibles por URL y siguen mostrando datos
-   inventados: "PORTAL CONECTADO", "4 agentes", "2 usuarios conectados" y
-   timestamps fijos `13:58:00`. **No las enseñes en la demo.** O se alinean al
-   monitor o se borran.
-3. El motor solo simula el caso recomendado. La home ya lo dice en pantalla
+1. Verificar Portal contra el servicio real una vez se completen las claves;
+   sin ellas el monitor muestra y usa `SSE · respaldo`.
+2. El motor solo simula el caso recomendado. La home ya lo dice en pantalla
    (chip `SIMULABLE` frente a `solo ficha`, y un aviso en el pie), pero si
    alguien quiere los otros tres casos hay que parametrizar `Engine`.
 

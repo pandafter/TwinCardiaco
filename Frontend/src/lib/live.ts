@@ -22,7 +22,7 @@ import type { Assessment, Frame, Rhythm, Status, Trend, Vitals } from "./engine"
 export const API =
   process.env.NEXT_PUBLIC_CARDIOTWIN_API ?? "http://localhost:8000";
 
-/** Los 7 eventos que consumimos. Ni uno más. */
+/** Eventos autoritativos que consume el monitor. */
 export type BackendEvent =
   | "vitals.tick"
   | "state.transition"
@@ -31,7 +31,14 @@ export type BackendEvent =
   | "agent.opinion"
   | "agent.conflict"
   | "orchestrator.consensus"
-  | "simulation.result";
+  | "simulation.result"
+  | "debate.started"
+  | "debate.round.started"
+  | "debate.turn.started"
+  | "debate.turn.delta"
+  | "debate.turn.done"
+  | "debate.verdict"
+  | "debate.error";
 
 /** Campos reales de `PhysioState.vitals()`. */
 export type BackendVitals = {
@@ -122,6 +129,80 @@ export type BackendSimulation = {
   scenarios: BackendScenario[];
   best_by_metric: Record<string, string | null>;
   note?: string;
+};
+
+export type BackendDebateStarted = {
+  debate_id: string;
+  trigger: string;
+  state: string;
+  voices: string[];
+};
+
+export type BackendDebateRound = {
+  debate_id: string;
+  round: number;
+  kind: "propuesta" | "replica" | "veredicto";
+};
+
+export type BackendDebateTurnStarted = {
+  debate_id: string;
+  turn_id: string;
+  round: number;
+  agent: string;
+  reply_to: string | null;
+};
+
+export type BackendDebateTurnDelta = {
+  debate_id: string;
+  turn_id: string;
+  round: number;
+  agent: string;
+  seq: number;
+  delta: string;
+};
+
+export type BackendDebateTurnDone = {
+  debate_id: string;
+  turn_id: string;
+  round: number;
+  agent: string;
+  reply_to: string | null;
+  text: string;
+  stance?: string;
+  intervention?: string | null;
+  confidence?: number;
+  evidence: { metric: string; value: number | string; source: string }[];
+  citations_verified: boolean;
+  source: "llm" | "reglas";
+  next_seq: number;
+};
+
+export type BackendDebateError = {
+  debate_id: string;
+  error: string;
+};
+
+export type BackendDebatePayload =
+  | BackendDebateStarted
+  | BackendDebateRound
+  | BackendDebateTurnStarted
+  | BackendDebateTurnDelta
+  | BackendDebateTurnDone
+  | BackendConsensus
+  | BackendDebateError;
+
+export type BackendDebateEvent = {
+  type: Extract<BackendEvent, `debate.${string}`>;
+  payload: BackendDebatePayload;
+};
+
+export type BackendWire<T> = {
+  type: BackendEvent;
+  payload: T;
+  id: string;
+  ts: number;
+  sim_time: number;
+  source?: string;
 };
 
 /* ------------------------------------------------------------ traducción */
@@ -217,13 +298,14 @@ export function toFrame(
 export type LiveStatus = "connecting" | "live" | "offline";
 
 type Handlers = {
-  onFrame: (f: Frame, raw: BackendVitals) => void;
+  onFrame: (f: Frame, raw: BackendVitals, wire: BackendWire<BackendVitals>) => void;
   onTransition: (t: BackendTransition) => void;
   onAgentStarted: (o: BackendOpinion) => void;
   onAgentOpinion: (o: BackendOpinion) => void;
   onConflict: (c: BackendConflict) => void;
   onConsensus: (c: BackendConsensus) => void;
   onSimulation: (s: BackendSimulation) => void;
+  onDebate: (event: BackendDebateEvent) => void;
   onStatus: (s: LiveStatus) => void;
 };
 
@@ -255,19 +337,25 @@ export class LiveSource {
     }
     this.es = es;
 
-    const on = <T,>(type: BackendEvent, fn: (payload: T) => void) =>
+    const on = <T,>(
+      type: BackendEvent,
+      fn: (payload: T, wire: BackendWire<T>) => void,
+    ) =>
       es.addEventListener(type, (ev) => {
         try {
-          fn(JSON.parse((ev as MessageEvent).data).payload as T);
+          const wire = JSON.parse(
+            (ev as MessageEvent).data,
+          ) as BackendWire<T>;
+          fn(wire.payload, wire);
         } catch {
           /* un evento malformado no puede tumbar el monitor */
         }
       });
 
-    on<BackendVitals>("vitals.tick", (v) => {
+    on<BackendVitals>("vitals.tick", (v, wire) => {
       this.setStatus("live");
       this.armStale();
-      this.h.onFrame(toFrame(v, this.lastTransition), v);
+      this.h.onFrame(toFrame(v, this.lastTransition), v, wire);
     });
     on<BackendTransition>("state.transition", (t) => {
       this.lastTransition = t;
@@ -278,6 +366,16 @@ export class LiveSource {
     on<BackendConflict>("agent.conflict", (c) => this.h.onConflict(c));
     on<BackendConsensus>("orchestrator.consensus", (c) => this.h.onConsensus(c));
     on<BackendSimulation>("simulation.result", (s) => this.h.onSimulation(s));
+    const onDebate = <T extends BackendDebatePayload>(
+      type: BackendDebateEvent["type"],
+    ) => on<T>(type, (payload) => this.h.onDebate({ type, payload }));
+    onDebate<BackendDebateStarted>("debate.started");
+    onDebate<BackendDebateRound>("debate.round.started");
+    onDebate<BackendDebateTurnStarted>("debate.turn.started");
+    onDebate<BackendDebateTurnDelta>("debate.turn.delta");
+    onDebate<BackendDebateTurnDone>("debate.turn.done");
+    onDebate<BackendConsensus>("debate.verdict");
+    onDebate<BackendDebateError>("debate.error");
 
     // EventSource reintenta solo, cada pocos ms y para siempre. Sin backend
     // eso llena la consola de errores y no aporta nada: se cierra y se
@@ -342,6 +440,10 @@ export const applyIntervention = (key: string, actor = "usuario") =>
 /** Dispara las ramas what-if. Se llama ANTES del hover y se cachea. */
 export const runWhatIf = (interventions?: string[]) =>
   post<BackendSimulation>("/api/whatif", { interventions, horizon_s: 900 });
+
+/** Convoca una junta completa y deja que sus turnos vuelvan por el stream. */
+export const conveneDebate = () =>
+  post<BackendConsensus>("/api/deliberate", {});
 
 /** Pregunta en lenguaje natural → parámetros del motor. */
 export type AskResult =

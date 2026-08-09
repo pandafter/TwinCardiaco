@@ -92,7 +92,11 @@ export function CausalChain({
   const ref = history.length > 60 ? history[history.length - 60] : history[0];
 
   return (
-    <div className="flex h-full w-full flex-col items-center justify-center gap-5 px-6">
+    <div
+      className={`flex h-full w-full flex-col items-center justify-center ${
+        compact ? "gap-2 px-3" : "gap-5 px-6"
+      }`}
+    >
       <div className="flex w-full items-stretch justify-center gap-2">
         {LINKS.map((l, i) => {
           const now = l.raw(vitals);
@@ -109,9 +113,14 @@ export function CausalChain({
           const glyph = !moving ? "→" : delta > 0 ? "↑" : "↓";
 
           return (
-            <div key={l.key} className="flex min-w-0 flex-1 items-center gap-2">
+            <div
+              key={l.key}
+              className={`flex min-w-0 flex-1 items-center ${compact ? "gap-1" : "gap-2"}`}
+            >
               <div
-                className="flex min-w-0 flex-1 flex-col items-center rounded-[0.6rem] border px-2 py-3 transition-colors duration-500"
+                className={`flex min-w-0 flex-1 flex-col items-center rounded-[0.6rem] border transition-colors duration-500 ${
+                  compact ? "px-1 py-2" : "px-2 py-3"
+                }`}
                 style={{
                   borderColor: moving
                     ? `color-mix(in srgb, ${tone} 45%, transparent)`
@@ -124,7 +133,13 @@ export function CausalChain({
                   transitionDelay: `${i * 120}ms`,
                 }}
               >
-                <div className="text-[0.5625rem] font-medium tracking-[0.18em] text-hi">
+                <div
+                  className={`font-medium text-hi ${
+                    compact
+                      ? "text-[0.48rem] tracking-[0.1em]"
+                      : "text-[0.5625rem] tracking-[0.18em]"
+                  }`}
+                >
                   {l.human}{" "}
                   <span style={{ color: tone }}>{glyph}</span>
                 </div>
@@ -135,14 +150,20 @@ export function CausalChain({
                   {l.value(vitals, assess)}
                   <span className="ml-1 text-[0.55em] text-dim">{l.unit}</span>
                 </div>
-                <div className="mt-1.5 text-center text-[0.4375rem] tracking-[0.06em] text-dim">
+                <div
+                  className={`text-center text-dim ${
+                    compact
+                      ? "mt-1 text-[0.4rem] tracking-[0.02em]"
+                      : "mt-1.5 text-[0.4375rem] tracking-[0.06em]"
+                  }`}
+                >
                   {l.tech}
                 </div>
               </div>
               {i < LINKS.length - 1 && (
                 <span className="relative flex shrink-0 items-center">
                   <span
-                    className="text-[0.9rem] transition-colors duration-500"
+                    className={`${compact ? "text-[0.65rem]" : "text-[0.9rem]"} transition-colors duration-500`}
                     style={{
                       color: worsening
                         ? "var(--crit)"

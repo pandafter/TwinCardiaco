@@ -66,29 +66,17 @@ curl -XPOST localhost:8000/api/scenario/reset     # para volver a ensayar
 
 ## 4. Portal encima (no en lugar de)
 
-```bash
-export PORTAL_SECRET_KEY=sk_...
-```
+Configura `PORTAL_SECRET_KEY` en `Backend/.env` y
+`NEXT_PUBLIC_PORTAL_PK` en `Frontend/.env.local`; no pegues ninguna clave en
+la terminal ni en un archivo versionado.
 
-El backend publica solo. El browser pide su JWT:
+El backend publica solo. `Frontend/src/lib/portal.ts` pide un JWT corto por
+`/api/portal/token`, lo renueva antes de vencer y se lo entrega al SDK
+oficial, que administra la conexion y las suscripciones.
 
-```js
-const r = await fetch("/api/portal/token", {
-  method: "POST", headers: {"Content-Type": "application/json"},
-  body: JSON.stringify({ user_id: "medico-1", display_name: "Dra. Ruiz" })
-});
-const { token, realtime_host, channels } = await r.json();
-```
-
-Y se suscribe a `channels.vitals|events|agents` contra `realtime_host`.
-Publica **solo** en `channels.actions`, y ese canal es de PROPUESTAS: el
-listener del backend valida y llama a `POST /api/intervention`, que
-republica el resultado autoritativo. Nunca apliques una accion directo
-desde el mensaje del cliente.
-
-**Antes de escribir el cliente**, lee el wire protocol de Portal: los
-endpoints WebSocket no estan en el OpenAPI. Y confirma `PUBLISH_PATH` en
-`cardiotwin/sync.py`, que es una suposicion marcada con TODO.
+Se suscribe a los canales `vitals`, `events` y `agents`. El estado fisiologico
+sigue siendo autoritativo en el backend; si Portal no conecta, la UI cambia
+automaticamente a `SSE · respaldo` y no congela la simulacion.
 
 ## 5. El corazon 3D
 

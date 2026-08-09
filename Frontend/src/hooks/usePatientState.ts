@@ -10,8 +10,12 @@ export type PatientControls = {
   reset: () => void;
   /** propone una intervención; con backend la decide el servidor */
   apply: (key: string) => void;
+  /** inicia las tres rondas y recibe el texto por el stream */
+  convene: () => void;
   /** de dónde vienen los datos ahora mismo */
   source: "backend" | "local";
+  transport: "portal" | "sse" | "local";
+  connected: number;
 };
 
 /**
@@ -24,7 +28,7 @@ export type PatientControls = {
  *    en /monitor.
  *  - local (con `?t=...`, `?freeze=1` o `intervention`): motor propio y
  *    determinista, para capturas de diseño y para las ramas simuladas de
- *    /response y /compare.
+ *    capturas reproducibles del monitor.
  *
  * Cuando el backend esté conectado, cambia patientStore, no este hook ni
  * ningún componente.
@@ -95,7 +99,10 @@ export function usePatientState({
         togglePause: () => patientStore.setPaused(!patientStore.paused),
         reset: () => patientStore.reset(),
         apply: (key: string) => patientStore.applyInterventionKey(key),
+        convene: () => patientStore.convene(),
         source: patientStore.source,
+        transport: patientStore.transport,
+        connected: patientStore.connected,
       }
     : null;
 
@@ -111,6 +118,7 @@ export function usePatientState({
           conflict: patientStore.conflict,
           consensus: patientStore.consensus,
           simulation: patientStore.simulation,
+          debate: patientStore.debate,
           applied: patientStore.applied,
         }
       : null,

@@ -113,6 +113,15 @@
   50% { opacity: 0.25; }
 }
 
+@keyframes debate-caret {
+  0%, 45% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.debate-caret {
+  animation: debate-caret 0.8s step-end infinite;
+}
+
 /* Halo que se expande una vez: marca que algo acaba de cambiar de verdad. */
 @keyframes ping-ring {
   0% { transform: scale(0.9); opacity: 0.55; }

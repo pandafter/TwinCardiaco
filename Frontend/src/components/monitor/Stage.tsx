@@ -5,10 +5,12 @@ import { AnimatePresence, motion } from "motion/react";
 import type { Assessment, Vitals } from "@/lib/engine";
 import type { AgentOutput } from "@/lib/agents";
 import type { Branch } from "@/lib/whatif";
+import type { DebateState } from "@/lib/patientStore";
 import type { Phase } from "./FlowGuide";
 import { BeatingHeart } from "./BeatingHeart";
 import { CausalChain } from "./CausalChain";
 import { SERIES, TrendChart } from "./TrendChart";
+import { DebateThread } from "./DebateThread";
 
 /**
  * El escenario: la zona grande del centro.
@@ -39,7 +41,7 @@ export type SceneKey = "body" | "agents" | "decide" | "result";
 
 const TABS: { key: SceneKey; label: string }[] = [
   { key: "body", label: "El paciente" },
-  { key: "agents", label: "Lo que dice la IA" },
+  { key: "agents", label: "La junta médica" },
   { key: "decide", label: "Las opciones" },
   { key: "result", label: "El resultado" },
 ];
@@ -51,11 +53,14 @@ export function Stage({
   history,
   agents,
   agentsSource,
+  debate,
+  onConvene,
   branches,
   projection,
   applied,
   pinned,
   onPin,
+  transport,
 }: {
   phase: Phase;
   vitals: Vitals;
@@ -63,12 +68,15 @@ export function Stage({
   history: Vitals[];
   agents: AgentOutput[];
   agentsSource: AgentsSource;
+  debate: DebateState | null;
+  onConvene: () => void;
   branches: Branch[];
   projection: Branch | null;
   applied: string | null;
   /** escena fijada a mano; null = sigue al caso */
   pinned: SceneKey | null;
   onPin: (s: SceneKey | null) => void;
+  transport: "portal" | "sse" | "local" | null;
 }) {
   // Prioridad: lo que el usuario fijó > lo que pidió ver (hover) > la fase.
   // Que las escenas cambiaran solas sin poder volver atrás era justo lo que
@@ -151,13 +159,26 @@ export function Stage({
         <AnimatePresence mode="wait">
           {scene === "body" && (
             <motion.div key="body" {...fade} className="absolute inset-0">
-              <BodyScene vitals={vitals} assess={assess} history={history} />
+              <BodyScene
+                vitals={vitals}
+                assess={assess}
+                history={history}
+                transport={transport}
+              />
             </motion.div>
           )}
 
           {scene === "agents" && (
             <motion.div key="agents" {...fade} className="absolute inset-0">
-              <AgentsScene agents={agents} source={agentsSource} />
+              {debate && debate.turns.size > 0 ? (
+                <DebateThread debate={debate} onConvene={onConvene} />
+              ) : (
+                <AgentsScene
+                  agents={agents}
+                  source={agentsSource}
+                  onConvene={onConvene}
+                />
+              )}
             </motion.div>
           )}
 
@@ -201,16 +222,18 @@ function BodyScene({
   vitals,
   assess,
   history,
+  transport,
 }: {
   vitals: Vitals;
   assess: Assessment;
   history: Vitals[];
+  transport: "portal" | "sse" | "local" | null;
 }) {
   return (
     <div className="flex h-full w-full flex-col">
       <SceneTitle
-        title="QUÉ LE ESTÁ PASANDO"
-        hint="Cada eslabón depende del anterior. Si el primero se rompe, caen todos."
+        title="GEMELO CARDÍACO EN VIVO"
+        hint="Mueve el cursor sobre el corazón y explora sus métricas: cada señal nace del mismo frame fisiológico."
       />
       <div className="relative flex min-h-0 flex-1 items-center">
         <div
@@ -221,17 +244,27 @@ function BodyScene({
             animation: "breathe 5s ease-in-out infinite",
           }}
         />
-        <div className="relative h-full w-[26%] shrink-0">
+        <div className="relative h-full w-[35%] min-w-[18.5rem] shrink-0 border-r border-line/70 p-2">
           <BeatingHeart
             hr={vitals.hr}
             rhythm={vitals.rhythm}
             strokeVolume={vitals.sv}
             perfusion={vitals.perfusion_index}
-            className="absolute top-1/2 left-1/2 h-[86%] w-[80%] -translate-x-1/2 -translate-y-1/2"
+            map={vitals.map}
+            cardiacOutput={vitals.co}
+            spo2={vitals.spo2}
+            lactate={vitals.lactate}
+            transport={transport}
+            className="h-full w-full"
           />
         </div>
-        <div className="relative min-w-0 flex-1 pr-4">
-          <CausalChain vitals={vitals} assess={assess} history={history} />
+        <div className="relative min-w-0 flex-1 pr-2">
+          <CausalChain
+            vitals={vitals}
+            assess={assess}
+            history={history}
+            compact
+          />
         </div>
       </div>
     </div>
@@ -245,9 +278,11 @@ export type AgentsSource = "llm" | "pending" | "local";
 function AgentsScene({
   agents,
   source,
+  onConvene,
 }: {
   agents: AgentOutput[];
   source: AgentsSource;
+  onConvene: () => void;
 }) {
   return (
     <div className="flex h-full w-full flex-col">
@@ -261,6 +296,14 @@ function AgentsScene({
               : "Sin modelo disponible: reglas locales. Los números siguen siendo del motor."
         }
         badge={source}
+        action={
+          <button
+            onClick={onConvene}
+            className="shrink-0 rounded-md border border-line-gold bg-gold/10 px-3 py-1.5 text-micro font-medium text-gold transition-colors hover:bg-gold/20"
+          >
+            Convocar junta
+          </button>
+        }
       />
       <div className="grid min-h-0 flex-1 grid-cols-3 gap-3 p-4">
         {agents.map((a, i) => (
@@ -531,12 +574,14 @@ function SceneTitle({
   hint,
   accent,
   badge,
+  action,
 }: {
   title: string;
   hint: string;
   accent?: string;
   /** de dónde salió lo que se está mostrando; se declara, no se supone */
   badge?: AgentsSource;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex shrink-0 items-baseline gap-3 border-b border-line px-4 py-2.5">
@@ -575,6 +620,7 @@ function SceneTitle({
               : "reglas locales"}
         </span>
       )}
+      {action}
     </div>
   );
 }
