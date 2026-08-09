@@ -35,7 +35,7 @@ necesitan abrir la URL pública.
 
 ## Consideración del hackathon
 
-El stream SSE del backend admite hasta 900 segundos por conexión en Vercel.
-El cliente se reconecta automáticamente, mientras Portal mantiene la
-sincronización entre pantallas. La demo debe probarse en producción antes de
-presentarla porque Vercel Services está en beta.
+El stream SSE del backend admite hasta 300 segundos por ejecución en el plan
+actual de Vercel. El cliente se reconecta automáticamente, mientras Portal
+mantiene la sincronización entre pantallas. La demo debe probarse en producción
+antes de presentarla porque Vercel Services está en beta.
