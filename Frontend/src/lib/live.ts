@@ -19,8 +19,11 @@ import type { Assessment, Frame, Rhythm, Status, Trend, Vitals } from "./engine"
  * haya backend, y visible en pantalla para que nadie se confunda.
  */
 
-export const API =
-  process.env.NEXT_PUBLIC_CARDIOTWIN_API ?? "http://localhost:8000";
+export const API = (
+  process.env.NEXT_PUBLIC_CARDIOTWIN_API ??
+  process.env.NEXT_PUBLIC_BACKEND_URL ??
+  "http://localhost:8000"
+).replace(/\/$/, "");
 
 /** Eventos autoritativos que consume el monitor. */
 export type BackendEvent =
