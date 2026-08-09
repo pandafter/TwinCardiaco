@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
+import { useRouter } from "next/navigation";
 import {
   CASES,
   DATA_SOURCES,
@@ -88,11 +89,17 @@ const VITAL_ICON_TONE: Record<string, string> = {
 };
 
 export function SelectPatientScreen() {
+  const router = useRouter();
   // Los casos custom viven en localStorage. Se cargan en el efecto porque
   // el server-render no tiene acceso a `window`; hasta que llegan, se
   // muestran solo los cuatro casos canonicos.
   const [customs, setCustoms] = useState<ClinicalCase[]>([]);
-  useEffect(() => setCustoms(loadCustomCases()), []);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      setCustoms(loadCustomCases());
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
 
   const allCases = useMemo(() => [...customs, ...CASES], [customs]);
   const [selectedId, setSelectedId] = useState(CASES[0].id);
@@ -130,7 +137,7 @@ export function SelectPatientScreen() {
       // el paciente sano por defecto y el usuario puede leerlo asi.
       await startScenario(presetToBody(active));
     } finally {
-      window.location.href = "/monitor";
+      router.push("/monitor");
     }
   };
 
