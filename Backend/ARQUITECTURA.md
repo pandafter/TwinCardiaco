@@ -230,18 +230,16 @@ simulacion y los agentes siguen y el front cae a polling de `/api/state`.
 Acoplar la logica al transporte es como se pierde una demo por una caida de
 red ajena. `PortalSync.health()` expone el contador de fallos.
 
-## Pendiente de verificar en la doc
+## Integracion verificada
 
-- Ruta y cuerpo exactos de publicacion desde servidor (`PUBLISH_PATH` en
-  `sync.py` es una suposicion marcada con TODO).
-- El **wire protocol** de los WebSocket (`GET /v1/channels/{id}`, `/inbox`) NO
-  esta en el OpenAPI: va documentado aparte como prosa, con handshake, tipos
-  de frame y codigos de rechazo. Leelo antes de escribir el cliente.
-- Si "emoji reactions" existe. La copy del sitio menciona *typing indicators*.
-  No diseñes contando con una feature sin confirmarla.
-- Errores: el codigo va en el cuerpo `{code, reason}` **y** en el header
-  `x-portal-error`. No ramifiques por status HTTP: varios codigos comparten
-  status.
+- El servidor publica en `/v1/channels/{channel}/messages` con una sola cola
+  ordenada y no bloqueante. Si la cola se llena descarta lo mas antiguo.
+- El navegador usa `@portalsdk/core` y `@portalsdk/react`; no implementa el
+  wire protocol WebSocket a mano.
+- `/api/portal/token` entrega un JWT corto con permisos de lectura/conexion y
+  mantiene las acciones del browser separadas del estado autoritativo.
+- `PortalSync.health()` expone publicados, descartados, fallos y pendientes.
+  Ante cualquier fallo el monitor conserva SSE como respaldo directo.
 
 `portal.emit('agent:run', {runId, status:'tool_call', tool:'...'})` es el
 patron que Portal documenta para estado de agentes. Uselo para el ciclo de
