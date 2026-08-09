@@ -55,6 +55,33 @@ ASK_MODEL = os.environ.get("CARDIOTWIN_ASK_MODEL", "claude-opus-5")
 ctx: dict = {}
 
 
+class VercelServicePrefixMiddleware:
+    """Normaliza el prefijo público del servicio antes del router FastAPI.
+
+    Vercel Services conserva ``/backend`` en el ASGI scope al aplicar el
+    rewrite del monorepo. Localmente el servidor sigue recibiendo ``/api``.
+    Aceptar ambos paths mantiene un solo contrato de endpoints y evita CORS.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") in {"http", "websocket"}:
+            path = scope.get("path", "")
+            prefix = "/backend"
+            if path == prefix or path.startswith(f"{prefix}/"):
+                scope = dict(scope)
+                scope["path"] = path[len(prefix):] or "/"
+                raw_path = scope.get("raw_path")
+                if raw_path == b"/backend" or (
+                    isinstance(raw_path, bytes)
+                    and raw_path.startswith(b"/backend/")
+                ):
+                    scope["raw_path"] = raw_path[len(b"/backend"):] or b"/"
+        await self.app(scope, receive, send)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import aiohttp
@@ -94,6 +121,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="CardioTwin", lifespan=lifespan)
+app.add_middleware(VercelServicePrefixMiddleware)
 
 # En hackathon el front suele estar en otro puerto. En produccion esto se
 # restringe: allow_origins=["*"] con credenciales es un agujero.

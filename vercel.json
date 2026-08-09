@@ -14,19 +14,7 @@
           "memory": 1024,
           "maxDuration": 300
         }
-      },
-      "routes": [
-        {
-          "src": "/backend/(.*)",
-          "transforms": [
-            {
-              "type": "request.path",
-              "op": "set",
-              "args": "/$1"
-            }
-          ]
-        }
-      ]
+      }
     }
   },
   "rewrites": [
