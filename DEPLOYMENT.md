@@ -4,8 +4,8 @@ TwinCardiaco se despliega como un único proyecto de **Vercel Services**:
 
 - `frontend`: Next.js en `/`.
 - `backend`: FastAPI en `/backend`.
-- El navegador consume el backend por la ruta relativa que Vercel publica en
-  `NEXT_PUBLIC_BACKEND_URL`, sin CORS ni una segunda plataforma.
+- El navegador consume el backend mediante `NEXT_PUBLIC_CARDIOTWIN_API=/backend`,
+  sin CORS ni una segunda plataforma.
 
 ## Variables de producción
 
@@ -27,6 +27,7 @@ Configurar en Vercel para `Production` y `Preview`:
 - `NEXT_PUBLIC_PORTAL_PK`
 - `NEXT_PUBLIC_CARDIOTWIN_SIM_ID=demo`
 - `NEXT_PUBLIC_CARDIOTWIN_USER=Equipo de guardia`
+- `NEXT_PUBLIC_CARDIOTWIN_API=/backend`
 
 `PORTAL_SECRET_KEY` y `ANTHROPIC_API_KEY` nunca se comparten con los jurados,
 no se escriben en Git y no llevan el prefijo `NEXT_PUBLIC_`. Los jurados solo
